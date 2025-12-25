@@ -18,6 +18,11 @@ tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread"] }
 config = "0.13"
 uuid = {version= "1", features = ["v4"]}
 chrono = "0.4.15"
+tracing = {version = "0.1" , features = ["log"]}
+tracing-subscriber = {version = "0.3", features = ["registry", "env-filter"]}
+tracing-bunyan-formatter = "0.3"
+tracing-log = "0.1" #actix-web内部使用的是log crate,希望将log crate产生的日志转发到tracing
+
 
 [dependencies.sqlx]
 version = "0.6"
