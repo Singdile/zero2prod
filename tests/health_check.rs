@@ -1,14 +1,30 @@
 // !tests/health_check.rs
-use std::net::TcpListener;
+use once_cell::sync::Lazy;
 use sqlx::{Connection, Executor, PgConnection, PgPool};
-use zero2prod::configuration::{get_configuration, DatabaseSettings};
-use zero2prod::startup::run;
+use std::net::TcpListener;
 use uuid::Uuid;
+use zero2prod::configuration::{DatabaseSettings, get_configuration};
+use zero2prod::startup::run;
+use zero2prod::telemetry::{get_sunscriber, init_subscriber};
 
+//声明一个静态变量，Lazy<()> 表示这是一个“懒加载”包装器，允许将这段初始化逻辑，推迟到第一次使用这个变量的时候。一旦使用，当再次调用，也只会返回第一次执行的结果。
+static TRACING: Lazy<()> = Lazy::new(|| {
+    let default_filiter_level = "info".into();
+    let subscriber_name = "test".into();
+
+    //如果设置了TEST_LOG 则使用std::io::stdout,否则 使用 std::io::sink
+    if std::env::var("TEST_LOG").is_ok() {
+        let subscriber = get_sunscriber(subscriber_name, default_filiter_level, std::io::stdout);
+        init_subscriber(subscriber);
+    } else {
+        let subscriber = get_sunscriber(subscriber_name, default_filiter_level, std::io::sink);
+        init_subscriber(subscriber);
+    }
+});
 
 pub struct TestApp {
     pub address: String,
-    pub db_pool: PgPool
+    pub db_pool: PgPool,
 }
 
 #[tokio::test]
@@ -32,6 +48,8 @@ async fn health_check_work() {
 
 //在后台启动应用程序,将服务程序绑定的addr返回(http://127.0.0.1:XXXX)
 async fn spawn_app() -> TestApp {
+    Lazy::force(&TRACING);
+
     //首先获得系统绑定的socket地址
     let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind random port");
 
@@ -41,33 +59,42 @@ async fn spawn_app() -> TestApp {
 
     //读取配置文件中的数据库连接信息
     let mut configuration = get_configuration().expect("Failed to read configuration");
-    configuration.database.database_name= Uuid::new_v4().to_string();
+    configuration.database.database_name = Uuid::new_v4().to_string();
     let connection_pool = configure_database(&configuration.database).await;
 
-
-    let server = run(listener,connection_pool.clone()).expect("Failed to bind address");
+    let server = run(listener, connection_pool.clone()).expect("Failed to bind address");
 
     //spawn创建一个tokio task,将server放在上面去执行，立即返回执行下面的代码
     // 通常下面的代码是同task 是没有什么关系的，但是如果有要用到task的返回结果，那么就会在需要的位置执行.await()
     tokio::spawn(server);
 
-    TestApp { address, db_pool: connection_pool}
+    TestApp {
+        address,
+        db_pool: connection_pool,
+    }
 }
-
 
 ///连接上postgres系统数据库，创建一个新的数据库，然后建立与新数据库的连接池PgPool,并返回
 pub async fn configure_database(config: &DatabaseSettings) -> PgPool {
     //创建数据库
-    let mut connection = PgConnection::connect(&config.connection_string_without_db()).await.expect("Failed to connect to Postgres");
-
-    connection.execute(format!(r#"CREATE DATABASE "{}";"#, config.database_name).as_str())
+    let mut connection = PgConnection::connect(&config.connection_string_without_db())
         .await
-    .expect("Failed to create database");
+        .expect("Failed to connect to Postgres");
+
+    connection
+        .execute(format!(r#"CREATE DATABASE "{}";"#, config.database_name).as_str())
+        .await
+        .expect("Failed to create database");
 
     //迁移数据库
-    let connection_pool = PgPool::connect(&config.connection_string()).await.expect("Failed to connect to Postgres.");
+    let connection_pool = PgPool::connect(&config.connection_string())
+        .await
+        .expect("Failed to connect to Postgres.");
 
-    sqlx::migrate!("./migrations").run(&connection_pool).await.expect("Failed to migrate the database");
+    sqlx::migrate!("./migrations")
+        .run(&connection_pool)
+        .await
+        .expect("Failed to migrate the database");
 
     connection_pool
 }
@@ -95,9 +122,9 @@ async fn subscribe_returns_a_200_for_valid_form_data() {
     let saved = sqlx::query!("SELECT email, name FROM subscriptions")
         .fetch_one(&app.db_pool)
         .await
-    .expect("Failed to fetch saved subscription.");
+        .expect("Failed to fetch saved subscription.");
 
-    assert_eq!(saved.email,"ursula_le_guin@gmail.com");
+    assert_eq!(saved.email, "ursula_le_guin@gmail.com");
     assert_eq!(saved.name, "le guin");
 }
 

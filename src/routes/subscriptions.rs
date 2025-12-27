@@ -12,34 +12,36 @@ pub struct FormData {
     name: String,
 }
 
-///总是返回200 ok
+///邮件订阅服务,总是返回200 ok
+///为函数专注于业务逻辑的处理，将日志等“插桩”信息交给过程宏,值得注意的是在默认的情况下面，tracing::instrument 会将所有传递给函数的参数都放入到跨度的上下文中，必须指明日志中不需要的输入
+///时刻注意这个不需要的日志信息是非常危险的，可能会导致信息泄漏,采用secrecy::Secret 来避免这个问题
+#[tracing::instrument(name = "Adding a new subscriber", skip(form,pool), fields (request_id = %Uuid::new_v4(), subscriber_email = %form.email, subscriber_name = %form.name))]
 pub async fn subscribe(form: web::Form<FormData>, pool: web::Data<PgPool>) -> HttpResponse {
-    let request_id = Uuid::new_v4();
+    match insert_subscriber(&form, &pool).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(e) => HttpResponse::InternalServerError().finish(),
+    }
+}
 
-    //创建一个info 级别的跨度
-    let request_pan = tracing::info_span!("Adding a new subscriber.", %request_id, subscriber_email = %form.email, subscriber_name = %form.name);
-
-    let _request_span_guard = request_pan.enter(); //激活跨度
-
-    //创建一个info 级别的跨度，由于前面有一个激活的跨度，所以这里的跨度自动成为了字跨度
-    let query_span = tracing::info_span!("Saving new subscriber details in the database");
-
-    let res = sqlx::query!(
+//将插入订阅者信息的操作单独为一个函数，并为该函数“插桩”
+#[tracing::instrument(
+    name = "Saving new subscriber details in the database",
+    skip(form, pool)
+)]
+pub async fn insert_subscriber(form: &FormData, pool: &PgPool) -> Result<(), sqlx::Error> {
+    sqlx::query!(
         r#"INSERT INTO subscriptions (id, email, name, subscribed_at) VALUES ($1, $2, $3, $4)"#,
         Uuid::new_v4(),
         form.email,
         form.name,
         Utc::now()
     )
-    .execute(pool.get_ref())
-    .instrument(query_span) //将这个执行任务的所有过程都记录在query_span这个跨度,当future被轮询的时候，自动进入Span;当future挂起的时候，自动推出span
-    .await;
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed tp execute query: {:?}", e);
+        e
+    })?;
 
-    match res {
-        Ok(_) => HttpResponse::Ok().finish(),
-        Err(e) => {
-            tracing::error!("Failed to execute query: {:?}", e); //查询失败，会返回日志信息
-            HttpResponse::InternalServerError().finish()
-        }
-    }
+    Ok(())
 }
