@@ -2,6 +2,9 @@
 use secrecy::ExposeSecret;
 use secrecy::Secret;
 use serde_aux::field_attributes::deserialize_number_from_string;
+use sqlx::ConnectOptions;
+use sqlx::postgres::PgConnectOptions;
+use sqlx::postgres::PgSslMode; //处理加密通信
 //默认实现序列化之后，serde会为结构体自动生成一套填充逻辑，会拿YAML里的Key去匹配结构体的字段名Field
 
 ///数据库配置信息
@@ -14,6 +17,7 @@ pub struct DatabaseSettings {
     pub port: u16,
     pub host: String,
     pub database_name: String,
+    pub require_ssl: bool, //确定是否需要加密连接
 }
 
 ///应用程序配置信息
@@ -69,25 +73,26 @@ pub fn get_configuration() -> Result<Settings, config::ConfigError> {
 impl DatabaseSettings {
     ///PostgreSQL 支持像浏览器地址一样的 URL 格式,
     /// 用于连接数据库,psql postgresql://<用户名>:<密码>@<主机地址>:<端口>/<数据库名>
-    pub fn connection_string(&self) -> Secret<String> {
-        Secret::new(format!(
-            "postgres://{}:{}@{}:{}/{}",
-            self.username,
-            self.password.expose_secret(), //敏感数据开锁使用
-            self.host,
-            self.port,
-            self.database_name
-        ))
+    pub fn with_db(&self) -> PgConnectOptions {
+        let mut options = self.without_db().database(&self.database_name);
+        //设置sqlx的日志级别
+        options.log_statements(tracing::log::LevelFilter::Trace);
+        options
     }
     ///返回数据库连接字符串,但是省略了数据库名
-    pub fn connection_string_without_db(&self) -> Secret<String> {
-        Secret::new(format!(
-            "postgres://{}:{}@{}:{}",
-            self.username,
-            self.password.expose_secret(), //敏感数据开锁使用
-            self.host,
-            self.port,
-        ))
+    pub fn without_db(&self) -> PgConnectOptions {
+        let ssl_mode = if self.require_ssl {
+            PgSslMode::Require //仅尝试ssl连接
+        } else {
+            PgSslMode::Prefer // 先尝试ssl连接，不行的话再尝试无ssl连接
+        };
+
+        PgConnectOptions::new()
+            .host(&self.host)
+            .username(&self.username)
+            .password(&self.password.expose_secret())
+            .port(self.port)
+            .ssl_mode(ssl_mode)
     }
 }
 
