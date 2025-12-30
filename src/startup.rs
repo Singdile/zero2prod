@@ -2,10 +2,10 @@
 
 use crate::routes::{health_check, subscribe};
 use actix_web::dev::Server;
-use actix_web::middleware::Logger;
-use actix_web::{web, App, HttpServer};
+use actix_web::{App, HttpServer, web};
 use sqlx::PgPool;
 use std::net::TcpListener;
+use tracing_actix_web::TracingLogger; //使用TracingLogger 为每一次请求分配一个唯一的ID,创建一个新的span
 
 pub fn run(listener: TcpListener, db_pool: PgPool) -> Result<Server, std::io::Error> {
     //为什么要传闭包？ 因为 Actix-web 需要为每一个 Worker 线程都创建一个独立的 App 实例。
@@ -17,7 +17,7 @@ pub fn run(listener: TcpListener, db_pool: PgPool) -> Result<Server, std::io::Er
     let db_pool = web::Data::new(db_pool); //将连接包裹在一个智能指针
     let server = HttpServer::new(move || {
         App::new()
-            .wrap(Logger::default())
+            .wrap(TracingLogger::default())
             .route("/health_check", web::get().to(health_check))
             .route("/subscriptions", web::post().to(subscribe))
             .app_data(db_pool.clone()) //获取一个智能指针的副本，并将其绑定

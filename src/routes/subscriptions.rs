@@ -3,7 +3,6 @@
 use actix_web::{HttpResponse, web};
 use chrono::Utc;
 use sqlx::PgPool;
-use tracing::Instrument;
 use uuid::Uuid;
 
 #[derive(serde::Deserialize)]
@@ -15,7 +14,7 @@ pub struct FormData {
 ///邮件订阅服务,总是返回200 ok
 ///为函数专注于业务逻辑的处理，将日志等“插桩”信息交给过程宏,值得注意的是在默认的情况下面，tracing::instrument 会将所有传递给函数的参数都放入到跨度的上下文中，必须指明日志中不需要的输入
 ///时刻注意这个不需要的日志信息是非常危险的，可能会导致信息泄漏,采用secrecy::Secret 来避免这个问题
-#[tracing::instrument(name = "Adding a new subscriber", skip(form,pool), fields (request_id = %Uuid::new_v4(), subscriber_email = %form.email, subscriber_name = %form.name))]
+#[tracing::instrument(name = "Adding a new subscriber", skip(form,pool), fields (subscriber_email = %form.email, subscriber_name = %form.name))]
 pub async fn subscribe(form: web::Form<FormData>, pool: web::Data<PgPool>) -> HttpResponse {
     match insert_subscriber(&form, &pool).await {
         Ok(_) => HttpResponse::Ok().finish(),

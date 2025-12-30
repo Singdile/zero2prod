@@ -1,35 +1,68 @@
 //! src/configuration.rs
-
 use secrecy::ExposeSecret;
 use secrecy::Secret;
-
+use serde_aux::field_attributes::deserialize_number_from_string;
 //默认实现序列化之后，serde会为结构体自动生成一套填充逻辑，会拿YAML里的Key去匹配结构体的字段名Field
+
+///数据库配置信息
 #[derive(serde::Deserialize)]
 pub struct DatabaseSettings {
     pub username: String,
     pub password: Secret<String>, //敏感信息，包装起来
+
+    #[serde(deserialize_with = "deserialize_number_from_string")]
     pub port: u16,
     pub host: String,
     pub database_name: String,
 }
 
+///应用程序配置信息
+#[derive(serde::Deserialize)]
+pub struct ApplicationSettings {
+    #[serde(deserialize_with = "deserialize_number_from_string")]
+    pub port: u16,
+    pub host: String,
+}
+
+///数据库配置信息和应用程序配置信息汇总
 #[derive(serde::Deserialize)]
 pub struct Settings {
     pub database: DatabaseSettings,
-    pub application_port: u16,
+    pub application: ApplicationSettings,
 }
 
-///获取数据库配置信息
+///获取配置信息，加载Settings
 pub fn get_configuration() -> Result<Settings, config::ConfigError> {
-    //初始化一个配置读取器
+    //工作目录的路径
+    let base_path = std::env::current_dir().expect("Failed to determine the current directory");
+    let configuration_directory = base_path.join("configuration"); //配置目录的路径
+
+    //检查运行环境
+    // 如果没有指定的话，则默认是`local`
+    let environment: Environment = std::env::var("APP_ENVIRONMENT")
+        .unwrap_or_else(|_| "local".into())
+        .try_into()
+        .expect("Failed to parse APP_ENVIRONMENT.");
+
+    //local.yaml,production.yaml
+    let environment_filename = format!("{}.yaml", environment.as_str());
+
+    //加载配置文件，base.yaml 是通用的配置， environment 是具体的配置
+    // 如果有重复的话，后面的配置会覆盖前面的配置
     let settings = config::Config::builder()
-        .add_source(config::File::new(
-            "configuration.yaml",
-            config::FileFormat::Yaml,
+        .add_source(config::File::from(
+            configuration_directory.join("base.yaml"),
         ))
+        .add_source(config::File::from(
+            configuration_directory.join(&environment_filename),
+        ))
+        .add_source(
+            config::Environment::with_prefix("APP")
+                .prefix_separator("_")
+                .separator("__"),
+        )
         .build()?;
 
-    //尝试将读取到的配置转换为Settings类型
     settings.try_deserialize::<Settings>()
 }
 
@@ -55,5 +88,35 @@ impl DatabaseSettings {
             self.host,
             self.port,
         ))
+    }
+}
+
+/// 应用程序可能的运行时环境
+pub enum Environment {
+    Local,
+    Production,
+}
+
+impl Environment {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Environment::Local => "local",
+            Environment::Production => "production",
+        }
+    }
+}
+
+impl TryFrom<String> for Environment {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        match value.to_lowercase().as_str() {
+            "local" => Ok(Self::Local),
+            "production" => Ok(Self::Production),
+            other => Err(format!(
+                "{} is not a surpported environment. Use either `local` or `production`.",
+                other
+            )),
+        }
     }
 }

@@ -23,6 +23,8 @@ tracing-subscriber = {version = "0.3", features = ["registry", "env-filter"]}
 tracing-bunyan-formatter = "0.3"
 tracing-log = "0.1" #actix-web内部使用的是log crate,希望将log crate产生的日志转发到tracing
 secrecy = {version = "0.8", features = ["serde"]}
+tracing-actix-web = "0.6"
+serde-aux = "3"
 
 
 [dependencies.sqlx]
@@ -34,7 +36,8 @@ features = [
          "postgres",
          "uuid",
          "chrono",
-         "migrate"
+         "migrate",
+         "offline"
 ]
 
 [dev-dependencies]
