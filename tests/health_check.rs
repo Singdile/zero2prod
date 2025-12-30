@@ -27,25 +27,6 @@ pub struct TestApp {
     pub db_pool: PgPool,
 }
 
-#[tokio::test]
-async fn health_check_work() {
-    //准备
-    let app = spawn_app().await;
-    //引入reaWest对应用程序执行http请求
-    let client = reqwest::Client::new();
-
-    //执行
-    let response = client
-        .get(format!("{}/health_check", &app.address))
-        .send()
-        .await
-        .expect("Failed to execute request.");
-
-    //断言
-    assert!(response.status().is_success());
-    assert_eq!(Some(0), response.content_length());
-}
-
 //在后台启动应用程序,将服务程序绑定的addr返回(http://127.0.0.1:XXXX)
 async fn spawn_app() -> TestApp {
     Lazy::force(&TRACING);
@@ -72,6 +53,25 @@ async fn spawn_app() -> TestApp {
         address,
         db_pool: connection_pool,
     }
+}
+
+#[tokio::test]
+async fn health_check_work() {
+    //准备
+    let app = spawn_app().await;
+    //引入reaWest对应用程序执行http请求
+    let client = reqwest::Client::new();
+
+    //执行
+    let response = client
+        .get(format!("{}/health_check", &app.address))
+        .send()
+        .await
+        .expect("Failed to execute request.");
+
+    //断言
+    assert!(response.status().is_success());
+    assert_eq!(Some(0), response.content_length());
 }
 
 ///连接上postgres系统数据库，创建一个新的数据库，然后建立与新数据库的连接池PgPool,并返回
@@ -155,6 +155,40 @@ async fn subscribe_returns_a_400_when_data_is_missing() {
             response.status().as_u16(),
             "The API did not fail with 400 Bad Request when the playload was {}",
             error_message
+        );
+    }
+}
+
+///用一些有问题的输入来测试API
+#[tokio::test]
+async fn subscribe_returns_a_200_when_fields_are_present_but_empty() {
+    //准备
+    let app = spawn_app().await;
+    let client = reqwest::Client::new();
+
+    let test_case = vec![
+        ("name=&email=ursula_le_guin%40gmail.com", "empty name"),
+        ("name=Ursula&email=", "empty email"),
+        ("name=Ursula&email=definitely-not-an-email", "invalid email"),
+    ];
+
+    //执行
+    for (body, description) in test_case {
+        //执行
+        let response = client
+            .post(format!("{}/subscriptions", app.address))
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(body)
+            .send()
+            .await
+            .expect("Failed to execute request.");
+
+        //断言判断
+        assert_eq!(
+            200,
+            response.status().as_u16(),
+            "The API did not return a 200 OK when the payload was {}", //payload 真正关心的数据，比如这里说的是body部分
+            description
         );
     }
 }
