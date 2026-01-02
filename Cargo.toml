@@ -25,6 +25,7 @@ tracing-log = "0.1" #actix-web内部使用的是log crate,希望将log crate产�
 secrecy = {version = "0.8", features = ["serde"]}
 tracing-actix-web = "0.6"
 serde-aux = "3"
+unicode-segmentation = "1"
 
 
 [dependencies.sqlx]

@@ -3198,6 +3198,7 @@ dependencies = [
  "tracing-bunyan-formatter",
  "tracing-log 0.1.4",
  "tracing-subscriber",
+ "unicode-segmentation",
  "uuid",
 ]
 
