@@ -185,7 +185,7 @@ async fn subscribe_returns_a_200_when_fields_are_present_but_empty() {
 
         //断言判断
         assert_eq!(
-            200,
+            400,
             response.status().as_u16(),
             "The API did not return a 200 OK when the payload was {}", //payload 真正关心的数据，比如这里说的是body部分
             description
