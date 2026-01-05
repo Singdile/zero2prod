@@ -18,14 +18,19 @@ pub struct FormData {
 ///时刻注意这个不需要的日志信息是非常危险的，可能会导致信息泄漏,采用secrecy::Secret 来避免这个问题
 #[tracing::instrument(name = "Adding a new subscriber", skip(form,pool), fields (subscriber_email = %form.email, subscriber_name = %form.name))]
 pub async fn subscribe(form: web::Form<FormData>, pool: web::Data<PgPool>) -> HttpResponse {
+    let name = match SubscriberName::parse(form.0.name) {
+        Ok(name) => name,
+        Err(_) => return HttpResponse::BadRequest().finish(), //姓名无效，提前返回,400 请求参数错误、验证失败
+    };
+
     let new_subscriber = NewSubscriber {
         email: form.0.email,
-        name: SubscriberName::parse(form.0.name).expect("Name validation failed"),
+        name,
     };
 
     match insert_subscriber(&new_subscriber, &pool).await {
         Ok(_) => HttpResponse::Ok().finish(),
-        Err(_e) => HttpResponse::InternalServerError().finish(),
+        Err(_e) => HttpResponse::InternalServerError().finish(), //500,服务器内部错误
     }
 }
 
