@@ -1,6 +1,6 @@
 //! src/routes/subscriptions.rs
 //!
-use crate::domain::{NewSubscriber, SubscriberEmail, SubscriberName};
+use crate::domain::NewSubscriber;
 use actix_web::{HttpResponse, web};
 use chrono::Utc;
 use sqlx::PgPool;
@@ -9,8 +9,8 @@ use uuid::Uuid;
 
 #[derive(serde::Deserialize)]
 pub struct FormData {
-    email: String,
-    name: String,
+    pub email: String,
+    pub name: String,
 }
 
 ///邮件订阅服务,总是返回200 ok
@@ -31,10 +31,7 @@ pub async fn subscribe(form: web::Form<FormData>, pool: web::Data<PgPool>) -> Ht
 
 ///解析订阅者的表单数据
 pub fn parse_subscriber(form: FormData) -> Result<NewSubscriber, String> {
-    let name = SubscriberName::parse(form.name)?;
-    let email = SubscriberEmail::parse(form.email)?;
-
-    Ok(NewSubscriber { email, name })
+    NewSubscriber::try_from(form)
 }
 
 //将插入订阅者信息的操作单独为一个函数，并为该函数“插桩”
