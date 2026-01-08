@@ -161,7 +161,7 @@ async fn subscribe_returns_a_400_when_data_is_missing() {
 
 ///用一些有问题的输入来测试API
 #[tokio::test]
-async fn subscribe_returns_a_400_when_fields_are_present_but_valid() {
+async fn subscribe_returns_a_400_when_fields_are_present_but_invalid() {
     //准备
     let app = spawn_app().await;
     let client = reqwest::Client::new();

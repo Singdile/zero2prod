@@ -1,6 +1,6 @@
 //! src/routes/subscriptions.rs
 //!
-use crate::domain::{NewSubscriber, SubscriberName};
+use crate::domain::{NewSubscriber, SubscriberEmail, SubscriberName};
 use actix_web::{HttpResponse, web};
 use chrono::Utc;
 use sqlx::PgPool;
@@ -23,10 +23,12 @@ pub async fn subscribe(form: web::Form<FormData>, pool: web::Data<PgPool>) -> Ht
         Err(_) => return HttpResponse::BadRequest().finish(), //姓名无效，提前返回,400 请求参数错误、验证失败
     };
 
-    let new_subscriber = NewSubscriber {
-        email: form.0.email,
-        name,
+    let email = match SubscriberEmail::parse(form.0.email) {
+        Ok(email) => email,
+        Err(_) => return HttpResponse::BadRequest().finish(), //邮件无效，提前返回，400 请求参数错误
     };
+
+    let new_subscriber = NewSubscriber { email, name };
 
     match insert_subscriber(&new_subscriber, &pool).await {
         Ok(_) => HttpResponse::Ok().finish(),
@@ -46,7 +48,7 @@ pub async fn insert_subscriber(
     sqlx::query!(
         r#"INSERT INTO subscriptions (id, email, name, subscribed_at) VALUES ($1, $2, $3, $4)"#,
         Uuid::new_v4(),
-        new_subscriber.email,
+        new_subscriber.email.as_ref(),
         new_subscriber.name.as_ref(), //仅读取信息
         Utc::now()
     )
