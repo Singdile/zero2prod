@@ -18,22 +18,23 @@ pub struct FormData {
 ///时刻注意这个不需要的日志信息是非常危险的，可能会导致信息泄漏,采用secrecy::Secret 来避免这个问题
 #[tracing::instrument(name = "Adding a new subscriber", skip(form,pool), fields (subscriber_email = %form.email, subscriber_name = %form.name))]
 pub async fn subscribe(form: web::Form<FormData>, pool: web::Data<PgPool>) -> HttpResponse {
-    let name = match SubscriberName::parse(form.0.name) {
-        Ok(name) => name,
-        Err(_) => return HttpResponse::BadRequest().finish(), //姓名无效，提前返回,400 请求参数错误、验证失败
+    let new_subscriber = match parse_subscriber(form.0) {
+        Ok(subscriber) => subscriber,
+        Err(_) => return HttpResponse::BadRequest().finish(), //表单数据错误，返回(400, BAD_REQUEST, "Bad Request");
     };
-
-    let email = match SubscriberEmail::parse(form.0.email) {
-        Ok(email) => email,
-        Err(_) => return HttpResponse::BadRequest().finish(), //邮件无效，提前返回，400 请求参数错误
-    };
-
-    let new_subscriber = NewSubscriber { email, name };
 
     match insert_subscriber(&new_subscriber, &pool).await {
         Ok(_) => HttpResponse::Ok().finish(),
         Err(_e) => HttpResponse::InternalServerError().finish(), //500,服务器内部错误
     }
+}
+
+///解析订阅者的表单数据
+pub fn parse_subscriber(form: FormData) -> Result<NewSubscriber, String> {
+    let name = SubscriberName::parse(form.name)?;
+    let email = SubscriberEmail::parse(form.email)?;
+
+    Ok(NewSubscriber { email, name })
 }
 
 //将插入订阅者信息的操作单独为一个函数，并为该函数“插桩”
