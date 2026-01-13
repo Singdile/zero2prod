@@ -20,7 +20,7 @@ pub fn run(
     //
     //
     let db_pool = web::Data::new(db_pool); //将连接包裹在一个智能指针
-    let email_client = web::Data::new(email_client); //将客户端实例包裹在一个智能指针，方便复用
+    let email_client = web::Data::new(email_client);  //将客户端实例包裹在一个智能指针，方便复用
     let server = HttpServer::new(move || {
         App::new()
             .wrap(TracingLogger::default())

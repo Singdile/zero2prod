@@ -1,12 +1,13 @@
 //! src/configuration.rs
+use crate::domain::SubscriberEmail;
 use secrecy::ExposeSecret;
 use secrecy::Secret;
 use serde_aux::field_attributes::deserialize_number_from_string;
 use sqlx::ConnectOptions;
 use sqlx::postgres::PgConnectOptions;
-use sqlx::postgres::PgSslMode; //处理加密通信
-//默认实现序列化之后，serde会为结构体自动生成一套填充逻辑，会拿YAML里的Key去匹配结构体的字段名Field
+use sqlx::postgres::PgSslMode; //处理加密通信 //客户端
 
+//默认实现序列化之后，serde会为结构体自动生成一套填充逻辑，会拿YAML里的Key去匹配结构体的字段名Field
 ///数据库配置信息
 #[derive(serde::Deserialize)]
 pub struct DatabaseSettings {
@@ -28,14 +29,28 @@ pub struct ApplicationSettings {
     pub host: String,
 }
 
+///客户端配置信息
+#[derive(serde::Deserialize)]
+pub struct EmailClientSettings {
+    pub base_url: String,     // 邮件服务商（如 Postmark）的 API 地址
+    pub sender_email: String, // 发件人（即你的 App 官方邮箱）
+}
+
+impl EmailClientSettings {
+    pub fn sender(&self) -> Result<SubscriberEmail, String> {
+        SubscriberEmail::parse(self.sender_email.clone())
+    }
+}
+
 ///数据库配置信息和应用程序配置信息汇总
 #[derive(serde::Deserialize)]
 pub struct Settings {
     pub database: DatabaseSettings,
     pub application: ApplicationSettings,
+    pub email_client: EmailClientSettings,
 }
 
-///获取配置信息，加载Settings
+///从配置文件configuration 获取配置信息，加载Settings
 pub fn get_configuration() -> Result<Settings, config::ConfigError> {
     //工作目录的路径
     let base_path = std::env::current_dir().expect("Failed to determine the current directory");

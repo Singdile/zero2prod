@@ -4,6 +4,7 @@ use sqlx::{Connection, Executor, PgConnection, PgPool};
 use std::net::TcpListener;
 use uuid::Uuid;
 use zero2prod::configuration::{DatabaseSettings, get_configuration};
+use zero2prod::email_client::EmailClient;
 use zero2prod::startup::run;
 use zero2prod::telemetry::{get_sunscriber, init_subscriber};
 
@@ -43,7 +44,15 @@ async fn spawn_app() -> TestApp {
     configuration.database.database_name = Uuid::new_v4().to_string();
     let connection_pool = configure_database(&configuration.database).await;
 
-    let server = run(listener, connection_pool.clone()).expect("Failed to bind address");
+    //使用configuration 构建一个 EmailClient
+    let sender_email = configuration
+        .email_client
+        .sender()
+        .expect("Invalid sender email address");
+    let email_client = EmailClient::new(configuration.email_client.base_url, sender_email);
+
+    let server =
+        run(listener, connection_pool.clone(), email_client).expect("Failed to bind address");
 
     //spawn创建一个tokio task,将server放在上面去执行，立即返回执行下面的代码
     // 通常下面的代码是同task 是没有什么关系的，但是如果有要用到task的返回结果，那么就会在需要的位置执行.await()
@@ -144,7 +153,7 @@ async fn subscribe_returns_a_400_when_data_is_missing() {
     for (invalid_body, error_message) in test_case {
         let response = client
             .post(format!("{}/subscriptions", &app.address))
-            .header("Content-type", "application/x-www-form-urlencoded") //http头部信息，表示传输的是表单信息
+            .header("Content-type", "application/x-www-form-urlencoded") //http头部信息，表示传输的是表单信
             .body(invalid_body)
             .send()
             .await

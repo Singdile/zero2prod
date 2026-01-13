@@ -1,6 +1,7 @@
 use sqlx::postgres::PgPoolOptions;
 use std::net::TcpListener;
 use zero2prod::configuration::get_configuration;
+use zero2prod::email_client::EmailClient;
 use zero2prod::startup::run;
 use zero2prod::telemetry::{get_sunscriber, init_subscriber};
 
@@ -22,5 +23,14 @@ async fn main() -> std::io::Result<()> {
     );
     let listener = TcpListener::bind(address)?;
 
-    run(listener, connection_pool)?.await
+    //使用configuration 构建一个 EmailClient
+    let sender_email = configuration
+        .email_client
+        .sender()
+        .expect("Invalid sender email address");
+    let email_client = EmailClient::new(configuration.email_client.base_url, sender_email);
+
+    //为run添加一个新参数 email_client
+    run(listener, connection_pool, email_client)?.await?;
+    Ok(())
 }
