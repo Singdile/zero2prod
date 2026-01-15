@@ -1,6 +1,6 @@
 //! src/startup.rs
 
-use crate::email_client::{self, EmailClient};
+use crate::email_client::EmailClient;
 use crate::routes::{health_check, subscribe};
 use actix_web::dev::Server;
 use actix_web::{App, HttpServer, web};
