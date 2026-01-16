@@ -45,15 +45,18 @@ async fn spawn_app() -> TestApp {
     configuration.database.database_name = Uuid::new_v4().to_string();
     let connection_pool = configure_database(&configuration.database).await;
 
-    //使用configuration 构建一个 EmailClient
+    //使用configuration 构建一个 EmailClient,用于发送邮件
     let sender_email = configuration
         .email_client
         .sender()
         .expect("Invalid sender email address");
+    
+    let time_out = configuration.email_client.timeout();
     let email_client = EmailClient::new(
         configuration.email_client.base_url,
         sender_email,
         configuration.email_client.authorization_token,
+	time_out
     );
 
     let server =

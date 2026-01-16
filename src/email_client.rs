@@ -19,9 +19,10 @@ impl EmailClient {
         base_url: String,
         sender: SubscriberEmail,
         authorization_token: Secret<String>,
+	time_out: std::time::Duration //设置默认的超时时间,通过配置读入
     ) -> Self {
 	//设置默认的超时时间
-	let builder =  Client::builder().timeout(Duration::from_secs(10)); //调用ClientBuilder来配置Client
+	let builder =  Client::builder().timeout(time_out); //调用ClientBuilder来配置Client
         Self {
             sender,
             http_client: builder.build().unwrap(),
@@ -109,23 +110,33 @@ mod tests {
     }
     
 
+    ///生成随机的邮件主题
+    fn subject() -> String{
+        Sentence(1..2).fake()
+    }
+    
+    ///生成随机的邮件内容
+    fn content() -> String {
+        Paragraph(1..10).fake()
+    }
+    
+    ///生成随机的电子邮件地址
+    fn email() -> SubscriberEmail{
+        SubscriberEmail::parse(SafeEmail().fake()).unwrap()
+    }
+    
+    ///获取`emailclient` 的实例
+    fn email_client(base_url: String) -> EmailClient{
+	//设置timeout短一点，方便测试
+	EmailClient::new(base_url, email(), Secret::new(Faker.fake()), std::time::Duration::from_millis(200)) 
+    }
+
     ///服务器返回正确
     #[tokio::test]
     async fn send_email_succeeds_if_the_server_returns_200() {
         //期望发送邮件到base_url
         let mock_server = MockServer::start().await; //完整的Http服务器,使用一个随机可用的端口
-        let sender = SubscriberEmail::parse(SafeEmail().fake()).unwrap();
-        let email_client = EmailClient::new(mock_server.uri(), sender, Secret::new(Faker.fake())); //将MockServer的URL传递
-
-        //加入MockServer的mock行为
-        // Mock::given(header_exists("X-Postmark-Server-Token"))
-        //     .and(header("Content-Type", "application/json"))
-        //     .and(method("POST"))
-        //     .and(SendEmailBodyMatcher) //使用自己定义的匹配，来检查请求的json
-        //     .respond_with(ResponseTemplate::new(200))
-        //     .expect(1) //表示测试期间，应该仅收到一个匹配的请求
-        //     .mount(&mock_server)
-        //     .await;
+        let email_client = email_client(mock_server.uri()); //将MockServer的URL传递
 	
 	
 	//尝试使用最少的内容，测试能否正常匹配
@@ -135,13 +146,9 @@ mod tests {
 	    .mount(&mock_server)
 	    .await;
 
-        let subscriber_email = SubscriberEmail::parse(SafeEmail().fake()).unwrap();
-        let subject: String = Sentence(1..2).fake();
-        let content: String = Paragraph(1..10).fake();
-
         //执行
         let outcome = email_client
-            .send_email(subscriber_email, &subject, &content, &content)
+            .send_email(email(), &subject(), &content(), &content())
             .await;
 	
 	//断言
@@ -152,9 +159,8 @@ mod tests {
     #[tokio::test]
     async fn send_email_fails_if_the_server_returns_500() {
         //期望发送邮件到base_url
-        let mock_server = MockServer::start().await; //完整的Http服务器,使用一个随机可用的端口
-        let sender = SubscriberEmail::parse(SafeEmail().fake()).unwrap();
-        let email_client = EmailClient::new(mock_server.uri(), sender, Secret::new(Faker.fake())); //将MockServer的URL传递
+        let mock_server = MockServer::start().await; //完整的http服务器,使用一个随机可用的端口
+        let email_client = email_client(mock_server.uri()); //将mockserver的url传递
 
         // 加入MockServer的mock行为
         Mock::given(any())
@@ -163,14 +169,9 @@ mod tests {
             .mount(&mock_server)
             .await;
 	
-	
-        let subscriber_email = SubscriberEmail::parse(SafeEmail().fake()).unwrap();
-        let subject: String = Sentence(1..2).fake();
-        let content: String = Paragraph(1..10).fake();
-
         //执行
         let outcome = email_client
-            .send_email(subscriber_email, &subject, &content, &content)
+            .send_email(email(), &subject(), &content(), &content())
             .await;
 	
 	//断言
@@ -182,10 +183,8 @@ mod tests {
     #[tokio::test]
     async fn send_email_times_out_if_the_server_takes_too_long() {
         //期望发送邮件到base_url
-        let mock_server = MockServer::start().await; //完整的Http服务器,使用一个随机可用的端口
-        let sender = SubscriberEmail::parse(SafeEmail().fake()).unwrap();
-        let email_client = EmailClient::new(mock_server.uri(), sender, Secret::new(Faker.fake())); //将MockServer的URL传递
-
+        let mock_server = MockServer::start().await; //完整的http服务器,使用一个随机可用的端口
+        let email_client = email_client(mock_server.uri()); //将mockserver的url传递
 	
 	//Mockserver 用于回复的response
 	let response = ResponseTemplate::new(200).set_delay(Duration::from_secs(180));
@@ -197,14 +196,9 @@ mod tests {
             .mount(&mock_server)
             .await;
 	
-	
-        let subscriber_email = SubscriberEmail::parse(SafeEmail().fake()).unwrap();
-        let subject: String = Sentence(1..2).fake();
-        let content: String = Paragraph(1..10).fake();
-
         //执行
         let outcome = email_client
-            .send_email(subscriber_email, &subject, &content, &content)
+            .send_email(email(), &subject(), &content(), &content())
             .await;
 	
 	//断言
