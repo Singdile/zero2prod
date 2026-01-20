@@ -6,7 +6,7 @@ use std::net::TcpListener;
 use uuid::Uuid;
 use zero2prod::configuration::{DatabaseSettings, get_configuration};
 use zero2prod::email_client::EmailClient;
-use zero2prod::startup::run;
+use zero2prod::startup::{build,run,get_connection_pool};
 use zero2prod::telemetry::{get_sunscriber, init_subscriber};
 
 pub struct TestApp {
@@ -41,35 +41,21 @@ pub async fn spawn_app() -> TestApp {
     let port = listener.local_addr().unwrap().port();
     let address = format!("http://127.0.0.1:{}", port);
 
-    //读取配置文件中的数据库连接信息
+    //读取配置文件信息
     let mut configuration = get_configuration().expect("Failed to read configuration");
     configuration.database.database_name = Uuid::new_v4().to_string();
-    let connection_pool = configure_database(&configuration.database).await;
 
-    //使用configuration 构建一个 EmailClient,用于发送邮件
-    let sender_email = configuration
-        .email_client
-        .sender()
-        .expect("Invalid sender email address");
-    
-    let time_out = configuration.email_client.timeout();
-    let email_client = EmailClient::new(
-        configuration.email_client.base_url,
-        sender_email,
-        configuration.email_client.authorization_token,
-	time_out
-    );
-
-    let server =
-        run(listener, connection_pool.clone(), email_client).expect("Failed to bind address");
+    let server = build(configuration.clone())
+	.await?
+	.expect("Failed to build application");
 
     //spawn创建一个tokio task,将server放在上面去执行，立即返回执行下面的代码
     // 通常下面的代码是同task 是没有什么关系的，但是如果有要用到task的返回结果，那么就会在需要的位置执行.await()
     tokio::spawn(server);
 
     TestApp {
-        address,
-        db_pool: connection_pool,
+        address:todo!(),
+        db_pool: get_connection_pool(&configuration.database),
     }
 }
 
