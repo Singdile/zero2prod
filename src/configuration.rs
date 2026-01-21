@@ -9,7 +9,7 @@ use sqlx::postgres::PgSslMode; //处理加密通信 //客户端
 
 //默认实现序列化之后，serde会为结构体自动生成一套填充逻辑，会拿YAML里的Key去匹配结构体的字段名Field
 ///数据库配置信息
-#[derive(serde::Deserialize,Clone)]
+#[derive(serde::Deserialize, Clone)]
 pub struct DatabaseSettings {
     pub username: String,
     pub password: Secret<String>, //敏感信息，包装起来
@@ -22,7 +22,7 @@ pub struct DatabaseSettings {
 }
 
 ///应用程序配置信息
-#[derive(serde::Deserialize,Clone)]
+#[derive(serde::Deserialize, Clone)]
 pub struct ApplicationSettings {
     #[serde(deserialize_with = "deserialize_number_from_string")]
     pub port: u16,
@@ -30,7 +30,7 @@ pub struct ApplicationSettings {
 }
 
 ///EmailClient的配置信息
-#[derive(serde::Deserialize,Clone)]
+#[derive(serde::Deserialize, Clone)]
 pub struct EmailClientSettings {
     pub base_url: String,     // 邮件服务商（如 Postmark）的 API 地址
     pub sender_email: String, // 发件人（即你的 App 官方邮箱）
@@ -43,15 +43,15 @@ impl EmailClientSettings {
     pub fn sender(&self) -> Result<SubscriberEmail, String> {
         SubscriberEmail::parse(self.sender_email.clone())
     }
-    
+
     ///获取http超时时间配置
-    pub fn timeout(&self) -> std::time::Duration{
-	std::time::Duration::from_millis(self.timeout_milliseconds)
+    pub fn timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(self.timeout_milliseconds)
     }
 }
 
 ///数据库配置信息和应用程序配置信息汇总
-#[derive(serde::Deserialize,Clone)]
+#[derive(serde::Deserialize, Clone)]
 pub struct Settings {
     pub database: DatabaseSettings,
     pub application: ApplicationSettings,

@@ -49,8 +49,6 @@ impl AsRef<str> for SubscriberName {
     }
 }
 
-
-
 //单元测试
 #[cfg(test)] //该行告诉编译器，cargo test 时才进行编译运行
 mod tests {

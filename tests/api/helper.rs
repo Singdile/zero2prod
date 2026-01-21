@@ -7,13 +7,28 @@ use std::net::TcpListener;
 use uuid::Uuid;
 use zero2prod::configuration::{DatabaseSettings, get_configuration};
 use zero2prod::email_client::EmailClient;
-use zero2prod::startup::{build,run,get_connection_pool};
-use zero2prod::telemetry::{get_sunscriber, init_subscriber};
 use zero2prod::startup::Application;
+use zero2prod::startup::{build, get_connection_pool, run};
+use zero2prod::telemetry::{get_sunscriber, init_subscriber};
 
+///测试服务器，包含服务器端口地址、数据库连接池
 pub struct TestApp {
     pub address: String,
     pub db_pool: PgPool,
+}
+
+
+impl TestApp {
+    ///用户发送订阅信息
+   pub async fn post_subscriptions(&self, body: String) -> reqwest::Response {
+      reqwest::Client::new()
+            .post(format!("{}/subscriptions", &self.address))
+            .header("Content-type", "application/x-www-form-urlencoded") //http头部信息，表示传输的是表单信
+            .body(body)
+            .send()
+            .await
+            .expect("Failed to execute request.")
+   } 
 }
 
 //声明一个静态变量，Lazy<()> 表示这是一个“懒加载”包装器，允许将这段初始化逻辑，推迟到第一次使用这个变量的时候。一旦使用，当再次调用，也只会返回第一次执行的结果。
@@ -31,32 +46,31 @@ static TRACING: Lazy<()> = Lazy::new(|| {
     }
 });
 
-
 //在后台启动应用程序,将服务程序绑定的addr返回(http://127.0.0.1:XXXX)
 pub async fn spawn_app() -> TestApp {
     Lazy::force(&TRACING);
-    
 
     //读取配置文件信息
-    let  configuration = {
-	let mut c = get_configuration().expect("Failed to readn configuration.");
-	//每次测试使用不同的数据库名字
-	c.database.database_name = Uuid::new_v4().to_string();
-	//使用随机端口
-	c.application.port = 0;
-	c
+    let configuration = {
+        let mut c = get_configuration().expect("Failed to readn configuration.");
+        //每次测试使用不同的数据库名字
+        c.database.database_name = Uuid::new_v4().to_string();
+        //使用随机端口
+        c.application.port = 0;
+        c
     };
 
     //创建和迁移数据库
     configure_database(&configuration.database).await;
 
     //构建applicaion
-    let application = Application::build(configuration.clone()).await.expect("Failed to build application.");
-    
+    let application = Application::build(configuration.clone())
+        .await
+        .expect("Failed to build application.");
+
     //返回服务器访问端口号
     let address = format!("http://localhost:{}", application.port());
 
-    
     //spawn创建一个tokio task,将server放在上面去执行，立即返回执行下面的代码
     // 通常下面的代码是同task 是没有什么关系的，但是如果有要用到task的返回结果，那么就会在需要的位置执行.await()
     let _ = tokio::spawn(application.run_until_stopped());

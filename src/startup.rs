@@ -1,69 +1,66 @@
 //! src/startup.rs
 
 use crate::configuration;
+use crate::configuration::DatabaseSettings;
+use crate::configuration::{Settings, get_configuration};
 use crate::email_client::EmailClient;
 use crate::routes::{health_check, subscribe};
 use actix_web::dev::Server;
 use actix_web::{App, HttpServer, web};
-use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
+use sqlx::postgres::PgPoolOptions;
 use std::net::TcpListener;
 use tracing_actix_web::TracingLogger; //使用TracingLogger 为每一次请求分配一个唯一的ID,创建一个新的span //客户端
-use crate::configuration::{Settings,get_configuration};
-use crate::configuration::DatabaseSettings;
-
 
 pub struct Application {
     port: u16,
     server: Server,
 }
 
-
 impl Application {
     //将 build 函数作为 Applicationd 的构造函数
     pub async fn build(configuration: Settings) -> Result<Self, std::io::Error> {
-    //连接数据库
-    let connection_pool = get_connection_pool(&configuration.database);
+        //连接数据库
+        let connection_pool = get_connection_pool(&configuration.database);
 
-    //使用configuration 构建一个 EmailClient
-    let sender_email = configuration
-        .email_client
-        .sender()
-        .expect("Invalid sender email address");
-    
-    let time_out = configuration.email_client.timeout();
-    let email_client = EmailClient::new(
-        configuration.email_client.base_url,
-        sender_email,
-        configuration.email_client.authorization_token,
-	time_out
-    );
+        //使用configuration 构建一个 EmailClient
+        let sender_email = configuration
+            .email_client
+            .sender()
+            .expect("Invalid sender email address");
 
-    //主机地址和对应的程序端口
-    let address = format!(
-        "{}:{}",
-        configuration.application.host, configuration.application.port
-    );
-    let listener = TcpListener::bind(address)?;
+        let time_out = configuration.email_client.timeout();
+        let email_client = EmailClient::new(
+            configuration.email_client.base_url,
+            sender_email,
+            configuration.email_client.authorization_token,
+            time_out,
+        );
 
-    let port = listener.local_addr().unwrap().port();
-    //为run添加一个新参数 email_client
-    let server = run(listener, connection_pool, email_client)?;
+        //主机地址和对应的程序端口
+        let address = format!(
+            "{}:{}",
+            configuration.application.host, configuration.application.port
+        );
+        let listener = TcpListener::bind(address)?;
 
-    Ok(Self { port, server })
+        //因为这里是随机分配的端口，所以，要提取出来
+        let port = listener.local_addr().unwrap().port();
+        //为run添加一个新参数 email_client
+        let server = run(listener, connection_pool, email_client)?;
+
+        Ok(Self { port, server })
     }
-    
 
     ///返回服务器访问端口号
     pub fn port(&self) -> u16 {
-	self.port
+        self.port
     }
-    
+
     pub async fn run_until_stopped(self) -> Result<(), std::io::Error> {
-	self.server.await
+        self.server.await
     }
 }
-
 
 ///读取配置文件，构建服务器
 pub async fn build(configuration: Settings) -> Result<Server, std::io::Error> {
@@ -75,13 +72,13 @@ pub async fn build(configuration: Settings) -> Result<Server, std::io::Error> {
         .email_client
         .sender()
         .expect("Invalid sender email address");
-    
+
     let time_out = configuration.email_client.timeout();
     let email_client = EmailClient::new(
         configuration.email_client.base_url,
         sender_email,
         configuration.email_client.authorization_token,
-	time_out
+        time_out,
     );
 
     //主机地址和对应的程序端口
@@ -93,19 +90,16 @@ pub async fn build(configuration: Settings) -> Result<Server, std::io::Error> {
 
     //为run添加一个新参数 email_client
     let server = run(listener, connection_pool, email_client)?;
-    
+
     Ok(server)
 }
 
-
 ///获取连接池
 pub fn get_connection_pool(configuration: &DatabaseSettings) -> PgPool {
-   PgPoolOptions::new()
-	.acquire_timeout(std::time::Duration::from_secs(2))
-	.connect_lazy_with(configuration.with_db())
+    PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_secs(2))
+        .connect_lazy_with(configuration.with_db())
 }
-
-
 
 pub fn run(
     listener: TcpListener,
