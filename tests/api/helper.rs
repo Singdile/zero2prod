@@ -1,4 +1,5 @@
 //! tests/api/helper.rs
+use fake::faker::address;
 use once_cell::sync::Lazy;
 use secrecy::Secret;
 use sqlx::{Connection, Executor, PgConnection, PgPool};
@@ -8,6 +9,7 @@ use zero2prod::configuration::{DatabaseSettings, get_configuration};
 use zero2prod::email_client::EmailClient;
 use zero2prod::startup::{build,run,get_connection_pool};
 use zero2prod::telemetry::{get_sunscriber, init_subscriber};
+use zero2prod::startup::Application;
 
 pub struct TestApp {
     pub address: String,
@@ -33,28 +35,34 @@ static TRACING: Lazy<()> = Lazy::new(|| {
 //在后台启动应用程序,将服务程序绑定的addr返回(http://127.0.0.1:XXXX)
 pub async fn spawn_app() -> TestApp {
     Lazy::force(&TRACING);
-
-    //首先获得系统绑定的socket地址
-    let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind random port");
-
-    //检查系统分配的端口号
-    let port = listener.local_addr().unwrap().port();
-    let address = format!("http://127.0.0.1:{}", port);
+    
 
     //读取配置文件信息
-    let mut configuration = get_configuration().expect("Failed to read configuration");
-    configuration.database.database_name = Uuid::new_v4().to_string();
+    let  configuration = {
+	let mut c = get_configuration().expect("Failed to readn configuration.");
+	//每次测试使用不同的数据库名字
+	c.database.database_name = Uuid::new_v4().to_string();
+	//使用随机端口
+	c.application.port = 0;
+	c
+    };
 
-    let server = build(configuration.clone())
-	.await?
-	.expect("Failed to build application");
+    //创建和迁移数据库
+    configure_database(&configuration.database).await;
 
+    //构建applicaion
+    let application = Application::build(configuration.clone()).await.expect("Failed to build application.");
+    
+    //返回服务器访问端口号
+    let address = format!("http://localhost:{}", application.port());
+
+    
     //spawn创建一个tokio task,将server放在上面去执行，立即返回执行下面的代码
     // 通常下面的代码是同task 是没有什么关系的，但是如果有要用到task的返回结果，那么就会在需要的位置执行.await()
-    tokio::spawn(server);
+    let _ = tokio::spawn(application.run_until_stopped());
 
     TestApp {
-        address:todo!(),
+        address,
         db_pool: get_connection_pool(&configuration.database),
     }
 }

@@ -13,9 +13,59 @@ use crate::configuration::{Settings,get_configuration};
 use crate::configuration::DatabaseSettings;
 
 
+pub struct Application {
+    port: u16,
+    server: Server,
+}
 
 
+impl Application {
+    //将 build 函数作为 Applicationd 的构造函数
+    pub async fn build(configuration: Settings) -> Result<Self, std::io::Error> {
+    //连接数据库
+    let connection_pool = get_connection_pool(&configuration.database);
 
+    //使用configuration 构建一个 EmailClient
+    let sender_email = configuration
+        .email_client
+        .sender()
+        .expect("Invalid sender email address");
+    
+    let time_out = configuration.email_client.timeout();
+    let email_client = EmailClient::new(
+        configuration.email_client.base_url,
+        sender_email,
+        configuration.email_client.authorization_token,
+	time_out
+    );
+
+    //主机地址和对应的程序端口
+    let address = format!(
+        "{}:{}",
+        configuration.application.host, configuration.application.port
+    );
+    let listener = TcpListener::bind(address)?;
+
+    let port = listener.local_addr().unwrap().port();
+    //为run添加一个新参数 email_client
+    let server = run(listener, connection_pool, email_client)?;
+
+    Ok(Self { port, server })
+    }
+    
+
+    ///返回服务器访问端口号
+    pub fn port(&self) -> u16 {
+	self.port
+    }
+    
+    pub async fn run_until_stopped(self) -> Result<(), std::io::Error> {
+	self.server.await
+    }
+}
+
+
+///读取配置文件，构建服务器
 pub async fn build(configuration: Settings) -> Result<Server, std::io::Error> {
     //连接数据库
     let connection_pool = get_connection_pool(&configuration.database);
