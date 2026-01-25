@@ -1,4 +1,5 @@
 //! src/email_client.rs
+
 use std::time::Duration;
 
 use crate::domain::SubscriberEmail;
@@ -6,7 +7,9 @@ use config::builder;
 use reqwest::{Client, ClientBuilder, Response};
 use secrecy::{ExposeSecret, Secret};
 use serde;
-///邮件客户端,将状态存储到数据结构，将行为放在impl实现
+///邮件客户端,将状态存储到数据结构,将行为放在impl实现
+///通过邮件客户端,向邮件提供商发起邮件服务请求
+///邮件服务商完成相关的邮件服务,并返回结果
 pub struct EmailClient {
     sender: SubscriberEmail,             //发送者的邮件地址
     http_client: Client,                 //作为客户端，与Postmark建立的连接

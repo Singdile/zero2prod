@@ -5,6 +5,7 @@ use secrecy::Secret;
 use sqlx::{Connection, Executor, PgConnection, PgPool};
 use std::net::TcpListener;
 use uuid::Uuid;
+use wiremock::MockServer;
 use zero2prod::configuration::{DatabaseSettings, get_configuration};
 use zero2prod::email_client::EmailClient;
 use zero2prod::startup::Application;
@@ -13,22 +14,22 @@ use zero2prod::telemetry::{get_sunscriber, init_subscriber};
 
 ///测试服务器，包含服务器端口地址、数据库连接池
 pub struct TestApp {
-    pub address: String,
-    pub db_pool: PgPool,
+    pub address: String,          //应用程序地址
+    pub db_pool: PgPool,          //数据库连接池
+    pub email_server: MockServer, //模拟服务器，替代Postmark的API
 }
-
 
 impl TestApp {
     ///用户发送订阅信息
-   pub async fn post_subscriptions(&self, body: String) -> reqwest::Response {
-      reqwest::Client::new()
+    pub async fn post_subscriptions(&self, body: String) -> reqwest::Response {
+        reqwest::Client::new()
             .post(format!("{}/subscriptions", &self.address))
             .header("Content-type", "application/x-www-form-urlencoded") //http头部信息，表示传输的是表单信
             .body(body)
             .send()
             .await
             .expect("Failed to execute request.")
-   } 
+    }
 }
 
 //声明一个静态变量，Lazy<()> 表示这是一个“懒加载”包装器，允许将这段初始化逻辑，推迟到第一次使用这个变量的时候。一旦使用，当再次调用，也只会返回第一次执行的结果。
@@ -50,6 +51,9 @@ static TRACING: Lazy<()> = Lazy::new(|| {
 pub async fn spawn_app() -> TestApp {
     Lazy::force(&TRACING);
 
+    //启动一个模拟服务器，替代postmark的api
+    let email_server = MockServer::start().await;
+
     //读取配置文件信息
     let configuration = {
         let mut c = get_configuration().expect("Failed to readn configuration.");
@@ -57,6 +61,8 @@ pub async fn spawn_app() -> TestApp {
         c.database.database_name = Uuid::new_v4().to_string();
         //使用随机端口
         c.application.port = 0;
+        //使用模拟服务器作为邮件的Postmark API
+        c.email_client.base_url = email_server.uri();
         c
     };
 
@@ -78,6 +84,7 @@ pub async fn spawn_app() -> TestApp {
     TestApp {
         address,
         db_pool: get_connection_pool(&configuration.database),
+        email_server,
     }
 }
 

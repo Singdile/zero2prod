@@ -1,6 +1,7 @@
 //! src/routes/subscriptions.rs
 //!
-use crate::domain::NewSubscriber;
+use crate::email_client::EmailClient;
+use crate::{domain::NewSubscriber, email_client};
 use actix_web::{HttpResponse, web};
 use chrono::Utc;
 use sqlx::PgPool;
@@ -16,17 +17,45 @@ pub struct FormData {
 ///邮件订阅服务,总是返回200 ok
 ///为函数专注于业务逻辑的处理，将日志等“插桩”信息交给过程宏,值得注意的是在默认的情况下面，tracing::instrument 会将所有传递给函数的参数都放入到跨度的上下文中，必须指明日志中不需要的输入
 ///时刻注意这个不需要的日志信息是非常危险的，可能会导致信息泄漏,采用secrecy::Secret 来避免这个问题
-#[tracing::instrument(name = "Adding a new subscriber", skip(form,pool), fields (subscriber_email = %form.email, subscriber_name = %form.name))]
-pub async fn subscribe(form: web::Form<FormData>, pool: web::Data<PgPool>) -> HttpResponse {
+#[tracing::instrument(name = "Adding a new subscriber", skip(form,pool,email_client), fields (subscriber_email = %form.email, subscriber_name = %form.name))]
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+    email_client: web::Data<EmailClient>,
+) -> HttpResponse {
     let new_subscriber = match parse_subscriber(form.0) {
         Ok(subscriber) => subscriber,
         Err(_) => return HttpResponse::BadRequest().finish(), //表单数据错误，返回(400, BAD_REQUEST, "Bad Request");
     };
 
-    match insert_subscriber(&new_subscriber, &pool).await {
-        Ok(_) => HttpResponse::Ok().finish(),
-        Err(_e) => HttpResponse::InternalServerError().finish(), //500,服务器内部错误
+    //插入失败，返回500服务器内部错误
+    if insert_subscriber(&new_subscriber, &pool).await.is_err() {
+        return HttpResponse::InternalServerError().finish();
     }
+
+    //插入成功，为新的订阅者发送一封确认邮件
+    let confirmation_link = "https://my-api.com/subscriptions/confirm";
+    if email_client
+        .send_email(
+            new_subscriber.email,
+            "Welcome",
+            &format!(
+                "Welcome to our newsletter!<br />\
+                      Click <a href=\"{}\">here</a> to confirm your subscription.",
+                confirmation_link.to_string()
+            ),
+            &format!(
+                "Welcome to our newsletter! \nVisit {} to confirm your subscription.",
+                confirmation_link.to_string()
+            ),
+        )
+        .await
+        .is_err()
+    {
+        return HttpResponse::InternalServerError().finish();
+    }
+
+    HttpResponse::Ok().finish()
 }
 
 ///解析订阅者的表单数据
@@ -44,7 +73,7 @@ pub async fn insert_subscriber(
     pool: &PgPool,
 ) -> Result<(), sqlx::Error> {
     sqlx::query!(
-        r#"INSERT INTO subscriptions (id, email, name, subscribed_at) VALUES ($1, $2, $3, $4)"#,
+        r#"INSERT INTO subscriptions (id, email, name, subscribed_at,status) VALUES ($1, $2, $3, $4,'confirmed')"#,
         Uuid::new_v4(),
         new_subscriber.email.as_ref(),
         new_subscriber.name.as_ref(), //仅读取信息

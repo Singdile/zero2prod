@@ -1,15 +1,31 @@
 //! test/api/subscriptions.rs
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, ResponseTemplate};
+
 use crate::helper::spawn_app;
-use crate::helper::TestApp;
 
 #[tokio::test]
-///测试合法数据是否能订阅成功
+/// 测试订阅功能：发送有效的表单数据应返回 200 OK，并正确保存到数据库
+///
+/// 此测试验证：
+/// - API 端点接受有效的 name 和 email
+/// - 数据库中成功插入订阅记录
+/// - 响应状态码为 200
 async fn subscribe_returns_a_200_for_valid_form_data() {
     //准备
     let app = spawn_app().await; //需要这里的返回值，所以调用await，执行并等待返回
     //执行
     let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
-    let response = app.post_subscriptions(body.to_string()).await; 
+
+    //模拟邮件服务器的反应
+    Mock::given(path("/email"))
+        .and(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&app.email_server)
+        .await;
+
+    //执行
+    let response = app.post_subscriptions(body.to_string()).await;
 
     //断言
     assert_eq!(200, response.status().as_u16());
@@ -36,7 +52,7 @@ async fn subscribe_returns_a_400_when_data_is_missing() {
 
     //执行
     for (invalid_body, error_message) in test_case {
-	let response = app.post_subscriptions(invalid_body.to_string()).await; 
+        let response = app.post_subscriptions(invalid_body.to_string()).await;
         //断言
         assert_eq!(
             400,
@@ -61,7 +77,7 @@ async fn subscribe_returns_a_400_when_fields_are_present_but_invalid() {
     //执行
     for (body, description) in test_case {
         //执行
-	let response = app.post_subscriptions(body.to_string()).await; 
+        let response = app.post_subscriptions(body.to_string()).await;
         //断言判断
         assert_eq!(
             400,
@@ -70,4 +86,65 @@ async fn subscribe_returns_a_400_when_fields_are_present_but_invalid() {
             description
         );
     }
+}
+
+///用户订阅之后，需要向用户发送确认订阅的邮件信息
+#[tokio::test]
+async fn subscribe_sends_a_confirmation_email_for_valid_data() {
+    //准备
+    let app = spawn_app().await;
+    let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+
+    Mock::given(path("/email"))
+        .and(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&app.email_server)
+        .await;
+
+    //执行
+    app.post_subscriptions(body.to_string()).await;
+
+    //断言判断
+    //Mock 会在析构的时候检查断言
+}
+
+///检测发送到模拟的邮件服务商的邮件时候包含链接
+#[tokio::test]
+async fn subscribe_sends_a_confirmation_email_with_a_link() {
+    //准备
+    let app = spawn_app().await;
+    let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+
+    Mock::given(path("/email"))
+        .and(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&app.email_server)
+        .await;
+
+    //执行
+    app.post_subscriptions(body.to_string()).await;
+
+    //断言
+    let email_request = &app.email_server.received_requests().await.unwrap()[0]; //返回MockServer接收到的所有请求,以Vec的形式,获取一个请求
+    let body: serde_json::Value = serde_json::from_slice(&email_request.body).unwrap(); //将正文部分从二进制转换为JSON格式
+
+    //从指定的字段提取链接
+    let get_link = |s: &str| {
+        //构建闭包
+        let links: Vec<_> = linkify::LinkFinder::new()
+            .links(s)
+            .filter(|l| *l.kind() == linkify::LinkKind::Url)
+            .collect();
+
+        assert_eq!(links.len(), 1);
+
+        links[0].as_str().to_owned()
+    };
+
+    let html_link = get_link(&body["HtmlBody"].as_str().unwrap());
+    let text_link = get_link(&body["TextBody"].as_str().unwrap());
+
+    //这两个链接应该是一样的
+    assert_eq!(html_link, text_link);
 }
