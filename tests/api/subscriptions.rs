@@ -4,13 +4,11 @@ use wiremock::{Mock, ResponseTemplate};
 
 use crate::helper::spawn_app;
 
-#[tokio::test]
-/// 测试订阅功能：发送有效的表单数据应返回 200 OK，并正确保存到数据库
-///
+/// 测试订阅功能：发送有效的表单数据应返回 200 OK
 /// 此测试验证：
 /// - API 端点接受有效的 name 和 email
-/// - 数据库中成功插入订阅记录
 /// - 响应状态码为 200
+#[tokio::test]
 async fn subscribe_returns_a_200_for_valid_form_data() {
     //准备
     let app = spawn_app().await; //需要这里的返回值，所以调用await，执行并等待返回
@@ -29,14 +27,35 @@ async fn subscribe_returns_a_200_for_valid_form_data() {
 
     //断言
     assert_eq!(200, response.status().as_u16());
+}
 
-    let saved = sqlx::query!("SELECT email, name FROM subscriptions")
+///测试订阅者数据是否正常存入数据库,持久化了
+#[tokio::test]
+async fn subscribe_persists_the_new_subscriber() {
+    //准备
+    let app = spawn_app().await; //需要这里的返回值，所以调用await，执行并等待返回
+    //执行
+    let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+
+    //模拟邮件服务器的反应
+    Mock::given(path("/email"))
+        .and(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&app.email_server)
+        .await;
+
+    //执行
+    let _response = app.post_subscriptions(body.to_string()).await;
+
+    //断言
+    let saved = sqlx::query!("SELECT email, name, status FROM subscriptions")
         .fetch_one(&app.db_pool)
         .await
         .expect("Failed to fetch saved subscription.");
 
     assert_eq!(saved.email, "ursula_le_guin@gmail.com");
     assert_eq!(saved.name, "le guin");
+    assert_eq!(saved.status, "pending_confirmation");
 }
 
 #[tokio::test]
