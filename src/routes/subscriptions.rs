@@ -1,5 +1,7 @@
 //! src/routes/subscriptions.rs
 //!
+use std::ops::Deref;
+
 use crate::email_client::EmailClient;
 use crate::{domain::NewSubscriber, email_client};
 use actix_web::{HttpResponse, web};
@@ -34,21 +36,7 @@ pub async fn subscribe(
     }
 
     //插入成功，为新的订阅者发送一封确认邮件
-    let confirmation_link = "https://my-api.com/subscriptions/confirm";
-    if email_client
-        .send_email(
-            new_subscriber.email,
-            "Welcome",
-            &format!(
-                "Welcome to our newsletter!<br />\
-                      Click <a href=\"{}\">here</a> to confirm your subscription.",
-                confirmation_link.to_string()
-            ),
-            &format!(
-                "Welcome to our newsletter! \nVisit {} to confirm your subscription.",
-                confirmation_link.to_string()
-            ),
-        )
+    if send_confirmation_email(email_client.deref(), new_subscriber)
         .await
         .is_err()
     {
@@ -56,6 +44,28 @@ pub async fn subscribe(
     }
 
     HttpResponse::Ok().finish()
+}
+
+///通过邮件服务商，像用户发送确认链接的邮件
+pub async fn send_confirmation_email(
+    email_client: &EmailClient,
+    new_subscriber: NewSubscriber,
+) -> Result<(), reqwest::Error> {
+    let confirmation_link = "https://my-api.com/subscriptions/confirm";
+    let plain_body = &format!(
+        "Welcome to our newsletter! \nVisit {} to confirm your subscription.",
+        confirmation_link
+    );
+
+    let html_body = &format!(
+        "Welcome to our newsletter!<br />\
+                      Click <a href=\"{}\">here</a> to confirm your subscription.",
+        confirmation_link
+    );
+
+    email_client
+        .send_email(new_subscriber.email, "Welcome", &html_body, &plain_body)
+        .await
 }
 
 ///解析订阅者的表单数据
