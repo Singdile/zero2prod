@@ -3,6 +3,7 @@
 use std::ops::Deref;
 
 use crate::email_client::EmailClient;
+use crate::startup::ApplicationBaseUrl;
 use crate::{domain::NewSubscriber, email_client};
 use actix_web::{HttpResponse, web};
 use chrono::Utc;
@@ -19,11 +20,12 @@ pub struct FormData {
 ///邮件订阅服务,总是返回200 ok
 ///为函数专注于业务逻辑的处理，将日志等“插桩”信息交给过程宏,值得注意的是在默认的情况下面，tracing::instrument 会将所有传递给函数的参数都放入到跨度的上下文中，必须指明日志中不需要的输入
 ///时刻注意这个不需要的日志信息是非常危险的，可能会导致信息泄漏,采用secrecy::Secret 来避免这个问题
-#[tracing::instrument(name = "Adding a new subscriber", skip(form,pool,email_client), fields (subscriber_email = %form.email, subscriber_name = %form.name))]
+#[tracing::instrument(name = "Adding a new subscriber", skip(form,pool,email_client,base_url), fields (subscriber_email = %form.email, subscriber_name = %form.name))]
 pub async fn subscribe(
     form: web::Form<FormData>,
     pool: web::Data<PgPool>,
     email_client: web::Data<EmailClient>,
+    base_url: web::Data<ApplicationBaseUrl>, //TODO: 正确使用base_url
 ) -> HttpResponse {
     let new_subscriber = match parse_subscriber(form.0) {
         Ok(subscriber) => subscriber,
@@ -36,7 +38,7 @@ pub async fn subscribe(
     }
 
     //插入成功，为新的订阅者发送一封确认邮件
-    if send_confirmation_email(email_client.deref(), new_subscriber)
+    if send_confirmation_email(&email_client, new_subscriber, &base_url.0)
         .await
         .is_err()
     {
@@ -46,12 +48,17 @@ pub async fn subscribe(
     HttpResponse::Ok().finish()
 }
 
-///通过邮件服务商，像用户发送确认链接的邮件
+///通过邮件服务商，向用户发送确认链接的邮件
 pub async fn send_confirmation_email(
     email_client: &EmailClient,
     new_subscriber: NewSubscriber,
+    base_url: &str,
 ) -> Result<(), reqwest::Error> {
-    let confirmation_link = "https://my-api.com/subscriptions/confirm";
+    //硬编码subsctiption_token
+    let confirmation_link = format!(
+        "{}/subscriptions/confirm?subscription_token=mytoken",
+        base_url
+    );
     let plain_body = &format!(
         "Welcome to our newsletter! \nVisit {} to confirm your subscription.",
         confirmation_link

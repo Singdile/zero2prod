@@ -22,11 +22,14 @@ pub struct DatabaseSettings {
 }
 
 ///应用程序配置信息
+/// host,port 这里是本机上要监听的address;base_url 是暴露给外部用户的地址
+/// 用户向base_url 发送信息,通过中间转发,发送到本机上监听的address再进行处理
 #[derive(serde::Deserialize, Clone)]
 pub struct ApplicationSettings {
     #[serde(deserialize_with = "deserialize_number_from_string")]
     pub port: u16,
     pub host: String,
+    pub base_url: String,
 }
 
 ///EmailClient的配置信息

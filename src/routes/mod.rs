@@ -1,8 +1,10 @@
 mod health_check;
 mod subscriptions;
+mod subscriptions_confirm; //处理订阅者的确认订阅信息
 
 pub use health_check::*;
 pub use subscriptions::*;
+pub use subscriptions_confirm::*;
 
 // 这两行是“扁平化”API 的常用技巧。
 

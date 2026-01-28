@@ -9,7 +9,7 @@ use wiremock::MockServer;
 use zero2prod::configuration::{DatabaseSettings, get_configuration};
 use zero2prod::email_client::EmailClient;
 use zero2prod::startup::Application;
-use zero2prod::startup::{build, get_connection_pool, run};
+use zero2prod::startup::{get_connection_pool, run};
 use zero2prod::telemetry::{get_sunscriber, init_subscriber};
 
 ///测试服务器，包含服务器端口地址、数据库连接池
@@ -17,6 +17,13 @@ pub struct TestApp {
     pub address: String,          //应用程序地址
     pub db_pool: PgPool,          //数据库连接池
     pub email_server: MockServer, //模拟服务器，替代Postmark的API
+    pub port: u16,                //服务器端口地址
+}
+
+///发送给邮件API的请求中所包含的确认链接
+pub struct ConfirmationLinks {
+    pub html: reqwest::Url,
+    pub plain_text: reqwest::Url,
 }
 
 impl TestApp {
@@ -29,6 +36,33 @@ impl TestApp {
             .send()
             .await
             .expect("Failed to execute request.")
+    }
+
+    ///从发送给邮件API的请求中提取出确认链接
+    pub fn get_confirmation_link(&self, email_request: &wiremock::Request) -> ConfirmationLinks {
+        let body: serde_json::Value = serde_json::from_slice(&email_request.body).unwrap(); //确认邮件信息
+
+        //从指定的字段提取链接
+        let get_link = |s: &str| {
+            //构建闭包
+            let links: Vec<_> = linkify::LinkFinder::new()
+                .links(s)
+                .filter(|l| *l.kind() == linkify::LinkKind::Url)
+                .collect();
+
+            assert_eq!(links.len(), 1);
+            let raw_link = links[0].as_str().to_owned();
+            let mut confirmation_link = reqwest::Url::parse(&raw_link).unwrap();
+            //确保调用的API是本地的
+            assert_eq!(confirmation_link.host_str().unwrap(), "127.0.0.1");
+            confirmation_link.set_port(Some(self.port)).unwrap();
+            confirmation_link
+        };
+
+        let html = get_link(&body["HtmlBody"].as_str().unwrap());
+        let plain_text = get_link(&body["TextBody"].as_str().unwrap());
+
+        ConfirmationLinks { html, plain_text }
     }
 }
 
@@ -76,6 +110,7 @@ pub async fn spawn_app() -> TestApp {
 
     //返回服务器访问端口号
     let address = format!("http://localhost:{}", application.port());
+    let application_port = application.port();
 
     //spawn创建一个tokio task,将server放在上面去执行，立即返回执行下面的代码
     // 通常下面的代码是同task 是没有什么关系的，但是如果有要用到task的返回结果，那么就会在需要的位置执行.await()
@@ -85,6 +120,7 @@ pub async fn spawn_app() -> TestApp {
         address,
         db_pool: get_connection_pool(&configuration.database),
         email_server,
+        port: application_port,
     }
 }
 

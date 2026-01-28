@@ -67,7 +67,7 @@ impl EmailClient {
 
 ///信的请求内容的json结构体
 #[derive(serde::Serialize)]
-#[serde(rename_all = "PascalCase")] //用于将结构体的字段名重名为大写驼峰式（首字母大写）
+#[serde(rename_all = "PascalCase")] //用于将结构体的字段名重名为大写驼峰式（首字母大写）HtmlBody
 struct SendEmailRequest<'a> {
     from: &'a str,
     to: &'a str,
