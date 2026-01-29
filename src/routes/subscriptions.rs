@@ -10,7 +10,8 @@ use actix_web::{HttpResponse, web};
 use chrono::Utc;
 use rand::distributions::Alphanumeric;
 use rand::{Rng, thread_rng};
-use sqlx::PgPool;
+use sqlx::Transaction;
+use sqlx::{PgPool, Postgres};
 use unicode_segmentation::UnicodeSegmentation;
 use uuid::Uuid;
 
@@ -77,19 +78,32 @@ pub async fn subscribe(
         Err(_) => return HttpResponse::BadRequest().finish(), //表单数据错误，返回(400, BAD_REQUEST, "Bad Request");
     };
 
+    //使用postgres的事务,将插入订阅者信息和插入订阅者的token的操作组合为一个事件,
+    //原子化操作使得数据库的结果： 1.成功插入订阅者信息和token 2.信息和token都没有插入
+    let mut transaction = match pool.begin().await {
+        //begin() 启用一个事务
+        Ok(transaction) => transaction,
+        Err(_) => return HttpResponse::InternalServerError().finish(),
+    };
+
     //插入失败，返回500服务器内部错误;插入成功,返回对应的订阅者id
-    let subscriber_id = match insert_subscriber(&new_subscriber, &pool).await {
+    let subscriber_id = match insert_subscriber(&new_subscriber, &mut transaction).await {
         Ok(subscribe_id) => subscribe_id,
         Err(_) => return HttpResponse::InternalServerError().finish(),
     };
 
     //插入订阅者的subscription_token
     let subscription_token = generate_subscription_token(); //产生订阅者的 subscription_token
-    if store_token(&pool, subscriber_id, &subscription_token)
+    if store_token(&mut transaction, subscriber_id, &subscription_token)
         .await
         .is_err()
     {
         return HttpResponse::InternalServerError().finish(); //存储subscription_token 失败,返回 500 服务器内部错误
+    }
+
+    //commit提交事务,否则默认会回滚
+    if transaction.commit().await.is_err() {
+        return HttpResponse::InternalServerError().finish();
     }
     //插入成功，为新的订阅者发送一封确认邮件
     if send_confirmation_email(
@@ -142,11 +156,11 @@ pub fn parse_subscriber(form: FormData) -> Result<NewSubscriber, String> {
 //将插入订阅者信息的操作单独为一个函数，并为该函数“插桩”
 #[tracing::instrument(
     name = "Saving new subscriber details in the database",
-    skip(new_subscriber, pool)
+    skip(new_subscriber, transcation)
 )]
 pub async fn insert_subscriber(
     new_subscriber: &NewSubscriber,
-    pool: &PgPool,
+    transcation: &mut Transaction<'_, Postgres>,
 ) -> Result<Uuid, sqlx::Error> {
     let subscriber_id = Uuid::new_v4(); // NOTE: 订阅者的标识符,方便后面存储对应的subscription_token
     sqlx::query!(
@@ -156,7 +170,7 @@ pub async fn insert_subscriber(
         new_subscriber.name.as_ref(), //仅读取信息
         Utc::now()
     )
-    .execute(pool)
+    .execute(transcation)
     .await
     .map_err(|e| {
         tracing::error!("Failed tp execute query: {:?}", e);
@@ -195,10 +209,10 @@ fn generate_subscription_token() -> String {
 ///将订阅者的subscription_token存入数据库中
 #[tracing::instrument(
     name = "Store subscription token in the database",
-    skip(pool, subscription_token)
+    skip(transcation, subscription_token, subscriber_id)
 )]
 pub async fn store_token(
-    pool: &PgPool,
+    transcation: &mut Transaction<'_, Postgres>,
     subscriber_id: Uuid,
     subscription_token: &str,
 ) -> Result<(), sqlx::Error> {
@@ -207,7 +221,7 @@ pub async fn store_token(
         subscription_token,
         subscriber_id
     )
-    .execute(pool)
+    .execute(transcation)
     .await
     .map_err(|e| {
         tracing::error!("Failed to execute query:{:?}", e); // NOTE: 错误级别日志宏记录
