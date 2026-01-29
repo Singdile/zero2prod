@@ -1,6 +1,6 @@
 {
   "db": "PostgreSQL",
-  "3365f86a1369bc5fa98378781d0a63ba67007de4428f15ab6a3c13aa8051cfc6": {
+  "62b0cfdce355366cd951bcc96c3def4ea1175d2d3ae90ecc755bda28eb1cb7be": {
     "describe": {
       "columns": [],
       "nullable": [],
@@ -13,6 +13,39 @@
         ]
       }
     },
-    "query": "INSERT INTO subscriptions (id, email, name, subscribed_at) VALUES ($1, $2, $3, $4)"
+    "query": "INSERT INTO subscriptions (id, email, name, subscribed_at,status) VALUES ($1, $2, $3, $4,'pending_confirmation')"
+  },
+  "ad120337ee606be7b8d87238e2bb765d0da8ee61b1a3bc142414c4305ec5e17f": {
+    "describe": {
+      "columns": [
+        {
+          "name": "subscriber_id",
+          "ordinal": 0,
+          "type_info": "Uuid"
+        }
+      ],
+      "nullable": [
+        false
+      ],
+      "parameters": {
+        "Left": [
+          "Text"
+        ]
+      }
+    },
+    "query": "SELECT subscriber_id FROM subscription_tokens WHERE subscription_token = $1"
+  },
+  "cd387b9979dd5073d66c579204ae5281cf1e7dd11806b3614cbb353bf13f9f14": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Left": [
+          "Text",
+          "Uuid"
+        ]
+      }
+    },
+    "query": "INSERT INTO subscription_tokens (subscription_token,subscriber_id) VALUES ($1,$2)"
   }
 }
