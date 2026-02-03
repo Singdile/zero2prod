@@ -10,7 +10,7 @@ use zero2prod::configuration::{DatabaseSettings, get_configuration};
 use zero2prod::email_client::EmailClient;
 use zero2prod::startup::Application;
 use zero2prod::startup::{get_connection_pool, run};
-use zero2prod::telemetry::{get_sunscriber, init_subscriber};
+use zero2prod::telemetry::{get_subscriber, init_subscriber};
 
 ///测试服务器，包含服务器端口地址、数据库连接池
 pub struct TestApp {
@@ -73,10 +73,10 @@ static TRACING: Lazy<()> = Lazy::new(|| {
 
     //如果设置了TEST_LOG 则使用std::io::stdout,否则 使用 std::io::sink
     if std::env::var("TEST_LOG").is_ok() {
-        let subscriber = get_sunscriber(subscriber_name, default_filiter_level, std::io::stdout);
+        let subscriber = get_subscriber(subscriber_name, default_filiter_level, std::io::stdout);
         init_subscriber(subscriber);
     } else {
-        let subscriber = get_sunscriber(subscriber_name, default_filiter_level, std::io::sink);
+        let subscriber = get_subscriber(subscriber_name, default_filiter_level, std::io::sink);
         init_subscriber(subscriber);
     }
 });

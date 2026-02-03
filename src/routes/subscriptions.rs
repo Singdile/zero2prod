@@ -1,11 +1,13 @@
 //! src/routes/subscriptions.rs
 //!
+use std::fmt::Display;
 use std::ops::Deref;
 use std::sync;
 
 use crate::email_client::EmailClient;
 use crate::startup::ApplicationBaseUrl;
 use crate::{domain::NewSubscriber, email_client};
+use actix_web::ResponseError;
 use actix_web::{HttpResponse, web};
 use chrono::Utc;
 use rand::distributions::Alphanumeric;
@@ -71,11 +73,11 @@ pub async fn subscribe(
     form: web::Form<FormData>,
     pool: web::Data<PgPool>,
     email_client: web::Data<EmailClient>,
-    base_url: web::Data<ApplicationBaseUrl>, //TODO: 正确使用base_url
-) -> HttpResponse {
+    base_url: web::Data<ApplicationBaseUrl>,
+) -> Result<HttpResponse, actix_web::Error> {
     let new_subscriber = match parse_subscriber(form.0) {
         Ok(subscriber) => subscriber,
-        Err(_) => return HttpResponse::BadRequest().finish(), //表单数据错误，返回(400, BAD_REQUEST, "Bad Request");
+        Err(_) => return Ok(HttpResponse::BadRequest().finish()), //表单数据错误，返回(400, BAD_REQUEST, "Bad Request");
     };
 
     //使用postgres的事务,将插入订阅者信息和插入订阅者的token的操作组合为一个事件,
@@ -83,27 +85,22 @@ pub async fn subscribe(
     let mut transaction = match pool.begin().await {
         //begin() 启用一个事务
         Ok(transaction) => transaction,
-        Err(_) => return HttpResponse::InternalServerError().finish(),
+        Err(_) => return Ok(HttpResponse::InternalServerError().finish()),
     };
 
     //插入失败，返回500服务器内部错误;插入成功,返回对应的订阅者id
     let subscriber_id = match insert_subscriber(&new_subscriber, &mut transaction).await {
         Ok(subscribe_id) => subscribe_id,
-        Err(_) => return HttpResponse::InternalServerError().finish(),
+        Err(_) => return Ok(HttpResponse::InternalServerError().finish()), //注意这里我们获取到了错误但是忽略了错误值，只向上返回了500错误代码，导致查看错误的时候只知道这里错，不知道为什么错
     };
 
     //插入订阅者的subscription_token
     let subscription_token = generate_subscription_token(); //产生订阅者的 subscription_token
-    if store_token(&mut transaction, subscriber_id, &subscription_token)
-        .await
-        .is_err()
-    {
-        return HttpResponse::InternalServerError().finish(); //存储subscription_token 失败,返回 500 服务器内部错误
-    }
+    store_token(&mut transaction, subscriber_id, &subscription_token).await?;
 
     //commit提交事务,否则默认会回滚
     if transaction.commit().await.is_err() {
-        return HttpResponse::InternalServerError().finish();
+        return Ok(HttpResponse::InternalServerError().finish());
     }
     //插入成功，为新的订阅者发送一封确认邮件
     if send_confirmation_email(
@@ -115,10 +112,10 @@ pub async fn subscribe(
     .await
     .is_err()
     {
-        return HttpResponse::InternalServerError().finish();
+        return Ok(HttpResponse::InternalServerError().finish());
     }
 
-    HttpResponse::Ok().finish()
+    Ok(HttpResponse::Ok().finish())
 }
 
 ///通过邮件服务商，向用户发送确认链接的邮件
@@ -156,11 +153,11 @@ pub fn parse_subscriber(form: FormData) -> Result<NewSubscriber, String> {
 //将插入订阅者信息的操作单独为一个函数，并为该函数“插桩”
 #[tracing::instrument(
     name = "Saving new subscriber details in the database",
-    skip(new_subscriber, transcation)
+    skip(new_subscriber, transaction)
 )]
 pub async fn insert_subscriber(
     new_subscriber: &NewSubscriber,
-    transcation: &mut Transaction<'_, Postgres>,
+    transaction: &mut Transaction<'_, Postgres>,
 ) -> Result<Uuid, sqlx::Error> {
     let subscriber_id = Uuid::new_v4(); // NOTE: 订阅者的标识符,方便后面存储对应的subscription_token
     sqlx::query!(
@@ -170,7 +167,7 @@ pub async fn insert_subscriber(
         new_subscriber.name.as_ref(), //仅读取信息
         Utc::now()
     )
-    .execute(transcation)
+    .execute(transaction)
     .await
     .map_err(|e| {
         tracing::error!("Failed tp execute query: {:?}", e);
@@ -209,24 +206,63 @@ fn generate_subscription_token() -> String {
 ///将订阅者的subscription_token存入数据库中
 #[tracing::instrument(
     name = "Store subscription token in the database",
-    skip(transcation, subscription_token, subscriber_id)
+    skip(transaction, subscription_token, subscriber_id)
 )]
 pub async fn store_token(
-    transcation: &mut Transaction<'_, Postgres>,
+    transaction: &mut Transaction<'_, Postgres>,
     subscriber_id: Uuid,
     subscription_token: &str,
-) -> Result<(), sqlx::Error> {
+) -> Result<(), StoreTokenError> {
     sqlx::query!(
         r#"INSERT INTO subscription_tokens (subscription_token,subscriber_id) VALUES ($1,$2)"#,
         subscription_token,
         subscriber_id
     )
-    .execute(transcation)
+    .execute(transaction)
     .await
     .map_err(|e| {
         tracing::error!("Failed to execute query:{:?}", e); // NOTE: 错误级别日志宏记录
-        e
+        StoreTokenError(e)
     })?;
 
+    Ok(())
+}
+
+// 用于包装 `sqlx::Error` 的新类型，方便为其实现特征
+pub struct StoreTokenError(sqlx::Error);
+
+impl std::fmt::Display for StoreTokenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "A database error was encountered while trying to store a subscription token."
+        )
+    }
+}
+
+impl std::fmt::Debug for StoreTokenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        error_chain_fmt(self, f)
+    }
+}
+impl ResponseError for StoreTokenError {}
+
+impl std::error::Error for StoreTokenError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
+    }
+}
+
+///错误传播链,直到打印出底层错误
+fn error_chain_fmt(
+    e: &impl std::error::Error,
+    f: &mut std::fmt::Formatter<'_>,
+) -> std::fmt::Result {
+    writeln!(f, "{}\n", e)?;
+    let mut current = e.source();
+    while let Some(cause) = current {
+        writeln!(f, "Caused by:\n\t{}", cause)?;
+        current = cause.source();
+    }
     Ok(())
 }

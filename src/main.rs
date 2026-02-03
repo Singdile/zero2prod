@@ -3,12 +3,12 @@ use std::net::TcpListener;
 use zero2prod::configuration::get_configuration;
 use zero2prod::email_client::EmailClient;
 use zero2prod::startup::Application;
-use zero2prod::telemetry::{get_sunscriber, init_subscriber};
+use zero2prod::telemetry::{get_subscriber, init_subscriber};
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     //设置全局的订阅器
-    let subscriber = get_sunscriber("zero2prod".into(), "info".into(), std::io::stdout);
+    let subscriber = get_subscriber("zero2prod".into(), "info".into(), std::io::stdout);
     init_subscriber(subscriber);
 
     //读取配置

@@ -5,7 +5,7 @@ use tracing_log::LogTracer;
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt};
 ///将多个层次组合一起形成 tracing 的订阅器
-pub fn get_sunscriber<Sink>(
+pub fn get_subscriber<Sink>(
     name: String,
     env_filter: String,
     sink: Sink, //表示日志数据的最终目的地

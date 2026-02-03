@@ -167,3 +167,23 @@ async fn subscribe_sends_a_confirmation_email_with_a_link() {
     //这两个链接应该是一样的
     assert_eq!(html_link, text_link);
 }
+
+///错误处理,当数据库操作发生错误,应当返回详细的错误报告给操作人员和简略的错误报告给用户
+#[tokio::test]
+async fn subscribe_fails_if_there_is_a_fatal_database_error() {
+    //准备
+    let app = spawn_app().await;
+    let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+
+    //删除subscription_tokens 表的列 subscription_token,导致订阅插入用户token到数据库失败
+    sqlx::query!(r#"ALTER TABLE subscription_tokens DROP COLUMN subscription_token;"#,)
+        .execute(&app.db_pool)
+        .await
+        .unwrap();
+
+    //执行
+    let response = app.post_subscriptions(body.to_string()).await;
+
+    //断言
+    assert_eq!(response.status().as_u16(), 500);
+}
