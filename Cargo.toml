@@ -30,6 +30,7 @@ claim = "0.5" # 精确的断言错误
 validator = "0.14" #用于邮箱验证
 reqwest = { version = "0.11", default-features = false, features = ["json","rustls-tls"]}
 rand = {version = "0.8", features = ["std_rng"]} #开启std_rng,从而使用所需要PRNG(persudo-random number generator)
+thiserror = "1" #用于减少error样板代码
 
 
 [dependencies.sqlx]
