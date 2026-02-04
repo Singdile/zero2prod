@@ -80,22 +80,41 @@ pub async fn subscribe(
 
     //使用postgres的事务,将插入订阅者信息和插入订阅者的token的操作组合为一个事件,
     //原子化操作使得数据库的结果： 1.成功插入订阅者信息和token 2.信息和token都没有插入
-    let mut transaction = pool.begin().await.map_err(SubscribeError::PoolError)?;
+    let mut transaction = pool.begin().await.map_err(|e| {
+        SubscribeError::UnexpectedError(
+            Box::new(e),
+            "Failed to acquire a Postgres connection from the pool.".into(),
+        )
+    })?;
 
     //插入失败，返回500服务器内部错误;插入成功,返回对应的订阅者id
     let subscriber_id = insert_subscriber(&new_subscriber, &mut transaction)
         .await
-        .map_err(SubscribeError::InsertSubsciberError)?;
+        .map_err(|e| {
+            SubscribeError::UnexpectedError(
+                Box::new(e),
+                "Failed to store insert new subscriber in the database.".into(),
+            )
+        })?;
 
     //插入订阅者的subscription_token
     let subscription_token = generate_subscription_token(); //产生订阅者的 subscription_token
-    store_token(&mut transaction, subscriber_id, &subscription_token).await?;
+    store_token(&mut transaction, subscriber_id, &subscription_token)
+        .await
+        .map_err(|e| {
+            SubscribeError::UnexpectedError(
+                Box::new(e),
+                "Failed to store the confirmation token for a new subscriber.".into(),
+            )
+        })?;
 
     //commit提交事务,否则默认会回滚
-    transaction
-        .commit()
-        .await
-        .map_err(SubscribeError::TransactionError)?;
+    transaction.commit().await.map_err(|e| {
+        SubscribeError::UnexpectedError(
+            Box::new(e),
+            "Failed to commit SQL transaction to store a new subscriber.".into(),
+        )
+    })?;
 
     //插入成功，为新的订阅者发送一封确认邮件
     // if send_confirmation_email(
@@ -115,7 +134,10 @@ pub async fn subscribe(
         &base_url.0,
         &subscription_token,
     )
-    .await?;
+    .await
+    .map_err(|e| {
+        SubscribeError::UnexpectedError(Box::new(e), "Failed to send a confimation email.".into())
+    })?;
 
     Ok(HttpResponse::Ok().finish())
 }
@@ -273,31 +295,36 @@ fn error_chain_fmt(
 /// 1.store_token()函数内部插入token失败，返回sqlx::Error且sqlx::Error 被包装成为 StoreTokenError(sqlx::Error) 向上返回
 /// 2.subscribe()函数中，将返回的StoreTokenError(sqlx::Error)转换为SubscribeError::StoreTokenError(StoreTokenError(sqlx::Error))
 /// 3.SubscriberError向上返回，转换为actix-web::Error
-/// 4.actix-web框架中的中间件tracing_actix_web::TracingLogger 会捕获这个错误，在集成的日志系统中记录信息，通常是调用Debug实现，然后便会调用到内部的SubscriberError的Debug实现
+/// NOTE: 4.actix-web框架中的中间件tracing_actix_web::TracingLogger 会捕获这个错误，在集成的日志系统中记录信息，通常是调用Debug实现，然后便会调用到内部的SubscriberError的Debug实现
 ///
 ///使用SubscribeError，将订阅发生的错误与Http之间的逻辑关系链接起来，而不是直接将底层错误比如存储令牌失败与Http之间关联.
 ///因为有些时候，单独调用插入token，不希望返回的Error的是Web的Error
 #[derive(thiserror::Error)]
 pub enum SubscribeError {
-    #[error("{0}")] //error("") 用于实现display
-    ValidationError(String),
-    // DatabaseError(sqlx::Error), DatabseError代表了多种情况，在display的时候，没有办法分清楚场景，需要为每一个场景添加变体
-    #[error("Failed to acquire a Postgres connection from the pool.")]
-    PoolError(#[source] sqlx::Error), //获取连接池错误 source实现std::error::Error,用于获取底层错误信息
+    #[error("{0}")] //error("") 用于实现SubscribeError 关于ValidationError变体的display
+    ValidationError(String), //调用者应知道的错误
 
-    #[error("Failed to insert new subscriber in the database.")]
-    InsertSubsciberError(#[source] sqlx::Error), //插入订阅者错误
+    //transparent直接包装实现SubscriberError 关于UnexpectedError变体的display,source， 即直接调用底层的display 和 source
+    #[error("{1}")]
+    UnexpectedError(#[source] Box<dyn std::error::Error>, String), //调用者不应该直接知道的底层错误
+                                                                   // DatabaseError(sqlx::Error), DatabseError代表了多种情况，在display的时候，没有办法分清楚场景，需要为每一个场景添加变体
+                                                                   // #[error("Failed to acquire a Postgres connection from the pool.")]
+                                                                   // PoolError(#[source] sqlx::Error), //获取连接池错误 source为SubscriberError 实现std::error::Error,用于获取底层错误信息
 
-    #[error("Failedt to store the confirmation token for a new subscriber.")]
-    StoreTokenError(#[from] StoreTokenError), //存储订阅者的token错误 from 实现错误类型向上转换`
+                                                                   // #[error("Failed to insert new subscriber in the database.")]
+                                                                   // InsertSubsciberError(#[source] sqlx::Error), //插入订阅者错误
 
-    #[error("Failedt to commit SQL transaction to store a new subscriber.")]
-    TransactionError(#[source] sqlx::Error), //提交数据库事件错误
+                                                                   // #[error("Failedt to store the confirmation token for a new subscriber.")]
+                                                                   // StoreTokenError(#[from] StoreTokenError), //存储订阅者的token错误 from 实现错误类型向上转换`
 
-    #[error("Failed to send a confirmation email.")]
-    SendEmailError(#[from] reqwest::Error),
+                                                                   // #[error("Failedt to commit SQL transaction to store a new subscriber.")]
+                                                                   // TransactionError(#[source] sqlx::Error), //提交数据库事件错误
+
+                                                                   // #[error("Failed to send a confirmation email.")]
+                                                                   // SendEmailError(#[from] reqwest::Error),
 }
 
+///实现Debug，方便在actix-web中表现
 impl std::fmt::Debug for SubscribeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         error_chain_fmt(&self, f)
@@ -324,17 +351,13 @@ impl std::fmt::Debug for SubscribeError {
 /// fn error_response(&self) -> HttpResponse; // 注意：返回 HttpResponse，不是 BoxBody
 /// ```
 ///
-/// 其**默认实现**会使用 `self` 的 `Display` 输出作为响应体（通过 `to_string()`），
+/// NOTE: 其**默认实现**会使用 `self` 的 `Display` 输出作为响应体（通过 `to_string()`），
 /// 但我们可以重写 `error_response` 来返回自定义 JSON 或其他格式。
 impl ResponseError for SubscribeError {
     fn status_code(&self) -> reqwest::StatusCode {
         match self {
             SubscribeError::ValidationError(_) => StatusCode::BAD_REQUEST,
-            SubscribeError::PoolError(_)
-            | SubscribeError::InsertSubsciberError(_)
-            | SubscribeError::TransactionError(_)
-            | SubscribeError::StoreTokenError(_)
-            | SubscribeError::SendEmailError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            SubscribeError::UnexpectedError(_, _) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 } //ResponseError 特征默认实现的方法是返回A 500 Internal Server Error的HttpResponse

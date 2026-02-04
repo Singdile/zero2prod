@@ -176,7 +176,12 @@ async fn subscribe_fails_if_there_is_a_fatal_database_error() {
     let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
 
     //删除subscription_tokens 表的列 subscription_token,导致订阅插入用户token到数据库失败
-    sqlx::query!(r#"ALTER TABLE subscription_tokens DROP COLUMN subscription_token;"#,)
+    // sqlx::query!(r#"ALTER TABLE subscription_tokens DROP COLUMN subscription_token;"#,)
+    //     .execute(&app.db_pool)
+    //     .await
+    //     .unwrap();
+
+    sqlx::query!(r#"ALTER TABLE subscriptions DROP COLUMN email;"#,)
         .execute(&app.db_pool)
         .await
         .unwrap();
