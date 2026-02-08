@@ -1,20 +1,20 @@
 //! src/routes/subscriptions.rs
 //
-use std::fmt::Display;
-use std::ops::Deref;
-use std::sync;
-
 use crate::email_client::EmailClient;
 use crate::startup::ApplicationBaseUrl;
 use crate::{domain::NewSubscriber, email_client};
 use actix_web::ResponseError;
 use actix_web::{HttpResponse, web};
+use anyhow::Context;
 use chrono::Utc;
 use rand::distributions::Alphanumeric;
 use rand::{Rng, thread_rng};
 use reqwest::StatusCode;
 use sqlx::Transaction;
 use sqlx::{PgPool, Postgres};
+use std::fmt::Display;
+use std::ops::Deref;
+use std::sync;
 use unicode_segmentation::UnicodeSegmentation;
 use uuid::Uuid;
 
@@ -80,41 +80,27 @@ pub async fn subscribe(
 
     //使用postgres的事务,将插入订阅者信息和插入订阅者的token的操作组合为一个事件,
     //原子化操作使得数据库的结果： 1.成功插入订阅者信息和token 2.信息和token都没有插入
-    let mut transaction = pool.begin().await.map_err(|e| {
-        SubscribeError::UnexpectedError(
-            Box::new(e),
-            "Failed to acquire a Postgres connection from the pool.".into(),
-        )
-    })?;
+    let mut transaction = pool
+        .begin()
+        .await
+        .context("Failed to acquire a Postgres connection from the pool.")?;
 
     //插入失败，返回500服务器内部错误;插入成功,返回对应的订阅者id
     let subscriber_id = insert_subscriber(&new_subscriber, &mut transaction)
         .await
-        .map_err(|e| {
-            SubscribeError::UnexpectedError(
-                Box::new(e),
-                "Failed to store insert new subscriber in the database.".into(),
-            )
-        })?;
+        .context("Failed to insert new subscriber in the database.")?;
 
     //插入订阅者的subscription_token
     let subscription_token = generate_subscription_token(); //产生订阅者的 subscription_token
     store_token(&mut transaction, subscriber_id, &subscription_token)
         .await
-        .map_err(|e| {
-            SubscribeError::UnexpectedError(
-                Box::new(e),
-                "Failed to store the confirmation token for a new subscriber.".into(),
-            )
-        })?;
+        .context("Failed to store the confirmation token for a new subscriber.")?;
 
     //commit提交事务,否则默认会回滚
-    transaction.commit().await.map_err(|e| {
-        SubscribeError::UnexpectedError(
-            Box::new(e),
-            "Failed to commit SQL transaction to store a new subscriber.".into(),
-        )
-    })?;
+    transaction
+        .commit()
+        .await
+        .context("Failed to commit SQL transaction to store a new subscriber.")?;
 
     //插入成功，为新的订阅者发送一封确认邮件
     // if send_confirmation_email(
@@ -135,9 +121,7 @@ pub async fn subscribe(
         &subscription_token,
     )
     .await
-    .map_err(|e| {
-        SubscribeError::UnexpectedError(Box::new(e), "Failed to send a confimation email.".into())
-    })?;
+    .context("Failed to send a confirmation email.")?;
 
     Ok(HttpResponse::Ok().finish())
 }
@@ -305,23 +289,22 @@ pub enum SubscribeError {
     ValidationError(String), //调用者应知道的错误
 
     //transparent直接包装实现SubscriberError 关于UnexpectedError变体的display,source， 即直接调用底层的display 和 source
-    #[error("{1}")]
-    UnexpectedError(#[source] Box<dyn std::error::Error>, String), //调用者不应该直接知道的底层错误
-                                                                   // DatabaseError(sqlx::Error), DatabseError代表了多种情况，在display的时候，没有办法分清楚场景，需要为每一个场景添加变体
-                                                                   // #[error("Failed to acquire a Postgres connection from the pool.")]
-                                                                   // PoolError(#[source] sqlx::Error), //获取连接池错误 source为SubscriberError 实现std::error::Error,用于获取底层错误信息
+    #[error(transparent)]
+    UnexpectedError(#[from] anyhow::Error), //调用者不应该直接知道的底层错误
+                                            // DatabaseError(sqlx::Error), DatabseError代表了多种情况，在display的时候，没有办法分清楚场景，需要为每一个场景添加变体 #[error("Failed to acquire a Postgres connection from the pool.")]
+                                            // PoolError(#[source] sqlx::Error), //获取连接池错误 source为SubscriberError 实现std::error::Error,用于获取底层错误信息
 
-                                                                   // #[error("Failed to insert new subscriber in the database.")]
-                                                                   // InsertSubsciberError(#[source] sqlx::Error), //插入订阅者错误
+                                            // #[error("Failed to insert new subscriber in the database.")]
+                                            // InsertSubsciberError(#[source] sqlx::Error), //插入订阅者错误
 
-                                                                   // #[error("Failedt to store the confirmation token for a new subscriber.")]
-                                                                   // StoreTokenError(#[from] StoreTokenError), //存储订阅者的token错误 from 实现错误类型向上转换`
+                                            // #[error("Failedt to store the confirmation token for a new subscriber.")]
+                                            // StoreTokenError(#[from] StoreTokenError), //存储订阅者的token错误 from 实现错误类型向上转换`
 
-                                                                   // #[error("Failedt to commit SQL transaction to store a new subscriber.")]
-                                                                   // TransactionError(#[source] sqlx::Error), //提交数据库事件错误
+                                            // #[error("Failedt to commit SQL transaction to store a new subscriber.")]
+                                            // TransactionError(#[source] sqlx::Error), //提交数据库事件错误
 
-                                                                   // #[error("Failed to send a confirmation email.")]
-                                                                   // SendEmailError(#[from] reqwest::Error),
+                                            // #[error("Failed to send a confirmation email.")]
+                                            // SendEmailError(#[from] reqwest::Error),
 }
 
 ///实现Debug，方便在actix-web中表现
@@ -357,7 +340,7 @@ impl ResponseError for SubscribeError {
     fn status_code(&self) -> reqwest::StatusCode {
         match self {
             SubscribeError::ValidationError(_) => StatusCode::BAD_REQUEST,
-            SubscribeError::UnexpectedError(_, _) => StatusCode::INTERNAL_SERVER_ERROR,
+            SubscribeError::UnexpectedError(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 } //ResponseError 特征默认实现的方法是返回A 500 Internal Server Error的HttpResponse
