@@ -38,6 +38,16 @@ impl TestApp {
             .expect("Failed to execute request.")
     }
 
+    ///向用户发送新的邮件
+    pub async fn post_newsletters(&self, body: serde_json::Value) -> reqwest::Response {
+        reqwest::Client::new()
+            .post(&format!("{}/newsletters", &self.address))
+            .json(&body)
+            .send()
+            .await
+            .expect("Failed to execute request.")
+    }
+
     ///从发送给邮件API的请求中提取出确认链接
     pub fn get_confirmation_link(&self, email_request: &wiremock::Request) -> ConfirmationLinks {
         let body: serde_json::Value = serde_json::from_slice(&email_request.body).unwrap(); //确认邮件信息
