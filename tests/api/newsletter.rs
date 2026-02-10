@@ -102,6 +102,8 @@ async fn newsletter_return_400_for_invalid_data() {
     //断言
 }
 
+/// TODO: 建立获取已确认的订阅者列表的测试
+
 ///创建一个确认的订阅用户
 async fn create_confirmed_subscriber(app: &TestApp) {
     let comfirmation_link = create_uncomfirmed_subscriber(app).await;
