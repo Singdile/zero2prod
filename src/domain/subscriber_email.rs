@@ -64,3 +64,9 @@ mod tests {
         assert_err!(SubscriberEmail::parse(email));
     }
 }
+
+impl std::fmt::Display for SubscriberEmail {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f) //String 实现了Display，所以也就有fmt方法,这里是直接调用的String的fmt方法
+    }
+}

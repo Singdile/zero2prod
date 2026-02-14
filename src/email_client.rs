@@ -37,7 +37,7 @@ impl EmailClient {
     ///发送给订阅者邮件
     pub async fn send_email(
         &self,
-        recipient: SubscriberEmail,
+        recipient: &SubscriberEmail,
         subject: &str,
         html_content: &str,
         text_content: &str,
@@ -154,7 +154,7 @@ mod tests {
 
         //执行
         let outcome = email_client
-            .send_email(email(), &subject(), &content(), &content())
+            .send_email(&email(), &subject(), &content(), &content())
             .await;
 
         //断言
@@ -177,7 +177,7 @@ mod tests {
 
         //执行
         let outcome = email_client
-            .send_email(email(), &subject(), &content(), &content())
+            .send_email(&email(), &subject(), &content(), &content())
             .await;
 
         //断言
@@ -203,7 +203,7 @@ mod tests {
 
         //执行
         let outcome = email_client
-            .send_email(email(), &subject(), &content(), &content())
+            .send_email(&email(), &subject(), &content(), &content())
             .await;
 
         //断言

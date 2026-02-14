@@ -59,16 +59,27 @@ pub async fn publish_newsletter(
 ) -> Result<HttpResponse, PublishError> {
     let subscribers = get_confirmed_subscribers(&pool).await?;
     for subscriber in subscribers {
-        email_client
-            .send_email(
-                subscriber.email,
-                &body.title,
-                &body.content.html,
-                &body.content.text,
-            )
-            .await
-            //anyhow::context 为Result实现了 Context 方法，Context方法，将Result<T,E> 转换为 Result<T,anyhow::Error>，并携带更多的信息
-            .with_context(|| format!("Failed to send newsletter issue to {}", subscriber.email));
+        match subscriber {
+            Ok(confirmedsubsciber) => email_client
+                .send_email(
+                    &confirmedsubsciber.email,
+                    &body.title,
+                    &body.content.html,
+                    &body.content.text,
+                )
+                .await
+                .with_context(|| {
+                    format!(
+                        "Failed to send newsletter issue to {}",
+                        confirmedsubsciber.email
+                    )
+                })?,
+            Err(error) => {
+                //这里的？是tracing库的特殊用法，和rust的语法中的？没有关系。 会记录变量的debug信息到日志中去
+                tracing::warn!(error.cause_chain = ?error, "Skipping a confirmed subscriber.\
+                                                            Their stored contact details are invalid");
+            }
+        }
     }
 
     Ok(HttpResponse::Ok().finish())
@@ -82,7 +93,7 @@ struct ConfirmedSubscriber {
 ///获取已订阅的订阅者列表
 async fn get_confirmed_subscribers(
     pool: &PgPool,
-) -> Result<Vec<ConfirmedSubscriber>, anyhow::Error> {
+) -> Result<Vec<Result<ConfirmedSubscriber, anyhow::Error>>, anyhow::Error> {
     //内部定义Row，来便捷地直接通过sqlx::query_as!获取查询的数据
     struct Row {
         email: String,
@@ -98,16 +109,10 @@ async fn get_confirmed_subscribers(
     //将获取的数据转换为符合条件的数据格式
     let confirmed_subscribers = rows
         .into_iter()
-        .filter_map(|r| match SubscriberEmail::parse(r.email) {
-            //filter_map 返回迭代器，保留闭包中Some(value) 的value值，忽略None
-            Ok(email) => Some(ConfirmedSubscriber { email }),
-            Err(err) => {
-                tracing::warn!(
-                    "A confimed subscirber is using an invalid email address.\n {}",
-                    err
-                ); //日志记录有效订阅者的无效地址；无效地址的出现有很多可能的原因，比如修改了邮件验证逻辑，导致之前的邮件地址确实是有效的，但是现在不再有效了
-                None
-            }
+        .map(|r| match SubscriberEmail::parse(r.email) {
+            //重新采用map是将对“无效”的邮件地址的处理交给调用者，这不应该是查询函数的工作职责
+            Ok(email) => Ok(ConfirmedSubscriber { email }),
+            Err(error) => Err(anyhow::anyhow!(error)),
         })
         .collect();
 
