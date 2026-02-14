@@ -94,27 +94,17 @@ struct ConfirmedSubscriber {
 async fn get_confirmed_subscribers(
     pool: &PgPool,
 ) -> Result<Vec<Result<ConfirmedSubscriber, anyhow::Error>>, anyhow::Error> {
-    //内部定义Row，来便捷地直接通过sqlx::query_as!获取查询的数据
-    struct Row {
-        email: String,
-    }
-
-    let rows = sqlx::query_as!(
-        Row,
-        r#"SELECT email FROM subscriptions WHERE status = 'confirmed'"#
-    )
-    .fetch_all(pool)
-    .await?; //anyhow::Error  为所有具有std::error::Error特征的错误，实现from.从而，使得sqlx::Error 能够通过from转换为anyhow::Error
-
-    //将获取的数据转换为符合条件的数据格式
-    let confirmed_subscribers = rows
-        .into_iter()
-        .map(|r| match SubscriberEmail::parse(r.email) {
-            //重新采用map是将对“无效”的邮件地址的处理交给调用者，这不应该是查询函数的工作职责
-            Ok(email) => Ok(ConfirmedSubscriber { email }),
-            Err(error) => Err(anyhow::anyhow!(error)),
-        })
-        .collect();
+    let confirmed_subscribers =
+        sqlx::query!(r#"SELECT email FROM subscriptions WHERE status = 'confirmed'"#)
+            .fetch_all(pool)
+            .await?
+            //查询返回的是匿名结构体，包含字段email
+            .into_iter()
+            .map(|r| match SubscriberEmail::parse(r.email) {
+                Ok(email) => Ok(ConfirmedSubscriber { email }),
+                Err(error) => Err(anyhow::anyhow!(error)),
+            })
+            .collect(); //anyhow::Error  为所有具有std::error::Error特征的错误，实现from.从而，使得sqlx::Error 能够通过from转换为anyhow::Error
 
     Ok(confirmed_subscribers)
 }
