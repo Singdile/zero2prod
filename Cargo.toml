@@ -32,6 +32,7 @@ reqwest = { version = "0.11", default-features = false, features = ["json","rust
 rand = {version = "0.8", features = ["std_rng"]} #开启std_rng,从而使用所需要PRNG(persudo-random number generator)
 thiserror = "1" #用于减少error样板代码
 anyhow = "1"
+base64 = "0.13"
 
 
 [dependencies.sqlx]

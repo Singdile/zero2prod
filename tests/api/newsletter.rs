@@ -102,8 +102,33 @@ async fn newsletter_return_400_for_invalid_data() {
     //断言
 }
 
-/// TODO: 建立获取已确认的订阅者列表的测试
+/// TODO: 从请求中提取用户名和密码
 
+///对publish_newsletter端点进行身份验证，请求头中不包含Authorization会被拒绝
+#[tokio::test]
+async fn requests_missing_authorization_are_rejected() {
+    //准备
+    let app = spawn_app().await;
+
+    let response = reqwest::Client::new()
+        .post(&format!("{}/newsletters", &app.address))
+        .json(&serde_json::json!({
+            "title": "Newsletter titile",
+            "content": {
+                "text":"Newsletter body as plain text",
+                "html":"<p>Newsletter body as HTML</p>"
+            }
+        }))
+        .send()
+        .await
+        .expect("Failed to execute request.");
+    //断言
+    assert_eq!(response.status().as_u16(), 401);
+    assert_eq!(
+        response.headers()["WWW-Authenticate"],
+        r#"Basic realm="publish""#
+    )
+}
 ///创建一个确认的订阅用户
 async fn create_confirmed_subscriber(app: &TestApp) {
     let comfirmation_link = create_uncomfirmed_subscriber(app).await;

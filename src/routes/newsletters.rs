@@ -2,11 +2,16 @@
 use crate::domain::SubscriberEmail;
 use crate::email_client::EmailClient;
 use crate::routes::error_chain_fmt;
+use actix_web::HttpRequest;
 use actix_web::HttpResponse;
 use actix_web::ResponseError;
 use actix_web::http::StatusCode;
+use actix_web::http::header::HeaderMap;
 use actix_web::web;
 use anyhow::Context;
+use reqwest::header;
+use reqwest::header::HeaderValue;
+use secrecy::Secret;
 use serde::Deserialize;
 use sqlx::PgPool;
 
@@ -26,6 +31,9 @@ pub struct Content {
 ///发送新的邮件的端口的错误类型
 #[derive(thiserror::Error)]
 pub enum PublishError {
+    #[error("Authtication failed")]
+    AuthError(#[source] anyhow::Error),
+
     #[error(transparent)]
     UnexpectedError(#[from] anyhow::Error),
 }
@@ -41,7 +49,25 @@ impl std::fmt::Debug for PublishError {
 impl ResponseError for PublishError {
     fn status_code(&self) -> StatusCode {
         match self {
-            PublishError::UnexpectedError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            PublishError::UnexpectedError(_) => StatusCode::INTERNAL_SERVER_ERROR, //500,服务器内部错误
+            //身份验证失败，返回401
+            PublishError::AuthError(_) => StatusCode::UNAUTHORIZED,
+        }
+    }
+
+    fn error_response(&self) -> HttpResponse<actix_web::body::BoxBody> {
+        match self {
+            PublishError::UnexpectedError(_) => {
+                HttpResponse::new(StatusCode::INTERNAL_SERVER_ERROR)
+            }
+            PublishError::AuthError(_) => {
+                let mut response = HttpResponse::new(StatusCode::UNAUTHORIZED);
+                let header_value = HeaderValue::from_str(r#"Basic realm="publish""#).unwrap();
+                response
+                    .headers_mut()
+                    .insert(header::WWW_AUTHENTICATE, header_value);
+                response
+            }
         }
     }
 }
@@ -56,7 +82,9 @@ pub async fn publish_newsletter(
     body: web::Json<BodyData>,
     pool: web::Data<PgPool>,
     email_client: web::Data<EmailClient>,
+    request: HttpRequest,
 ) -> Result<HttpResponse, PublishError> {
+    let _credentials = basic_authentication(request.headers()).map_err(PublishError::AuthError)?;
     let subscribers = get_confirmed_subscribers(&pool).await?;
     for subscriber in subscribers {
         match subscriber {
@@ -83,6 +111,52 @@ pub async fn publish_newsletter(
     }
 
     Ok(HttpResponse::Ok().finish())
+}
+
+///basic auth 需要的用户名和密码
+struct Credentials {
+    username: String,
+    password: Secret<String>,
+}
+
+/// TODO: 处理basic_authentication的错误
+///提取base64编码的用户名和密码
+fn basic_authentication(headers: &HeaderMap) -> Result<Credentials, anyhow::Error> {
+    //获取头部中关于HeaderMap 的值
+    let header_value = headers
+        .get("Authorization")
+        .context("The 'Authorization' header was missing")?
+        .to_str()
+        .context("The 'Authorization' header was not a valid UTF8 string.")?;
+
+    //字符串切割出 用户名:密码的 base64 编码
+    let base64encoded_segment = header_value
+        .strip_prefix("Basic")
+        .context("The authorization scheme was not 'Basic'")?;
+
+    //将内容转换为字节
+    let decoded_bytes = base64::decode_config(base64encoded_segment, base64::STANDARD)
+        .context("Failed to base64-decode 'Basic' credentials")?;
+
+    //解析为utf8
+    let decoded_credentials = String::from_utf8(decoded_bytes)
+        .context("The decoded credential string is not valid UTF8.")?;
+
+    //使用冒号分隔
+    let mut credentials = decoded_credentials.splitn(2, ':'); //返回迭代器
+    let username = credentials
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("A username must be provided in 'Basic' auth."))?
+        .to_string();
+    let password = credentials
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("A password muse be provided in 'Basic' auth."))?
+        .to_string();
+
+    Ok(Credentials {
+        username,
+        password: Secret::new(password),
+    })
 }
 
 ///确认订阅的订阅者
