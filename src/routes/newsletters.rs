@@ -11,9 +11,12 @@ use actix_web::web;
 use anyhow::Context;
 use reqwest::header;
 use reqwest::header::HeaderValue;
+use secrecy::ExposeSecret;
 use secrecy::Secret;
 use serde::Deserialize;
 use sqlx::PgPool;
+use sqlx::Pool;
+use uuid::Uuid;
 
 ///保存发送的新邮件的数据结构
 #[derive(Deserialize)]
@@ -31,11 +34,11 @@ pub struct Content {
 ///发送新的邮件的端口的错误类型
 #[derive(thiserror::Error)]
 pub enum PublishError {
-    #[error("Authtication failed")]
+    #[error("Authentication failed")]
     AuthError(#[source] anyhow::Error),
 
     #[error(transparent)]
-    UnexpectedError(#[from] anyhow::Error),
+    UnexpectedError(#[from] anyhow::Error), //使用thiserror 自动实现了anyhow::Error 通过from转换为 PublishError::UnexpectedError
 }
 
 ///实现Debug，逐层打印错误链接
@@ -57,9 +60,11 @@ impl ResponseError for PublishError {
 
     fn error_response(&self) -> HttpResponse<actix_web::body::BoxBody> {
         match self {
+            //内部错误，如连接服务器失败，属于服务端错误，只需返回500 服务器内部错误
             PublishError::UnexpectedError(_) => {
                 HttpResponse::new(StatusCode::INTERNAL_SERVER_ERROR)
             }
+            //身份验证失败，返回401代码，并添加头部信息 WWW-AUTHENICATE
             PublishError::AuthError(_) => {
                 let mut response = HttpResponse::new(StatusCode::UNAUTHORIZED);
                 let header_value = HeaderValue::from_str(r#"Basic realm="publish""#).unwrap();
@@ -78,13 +83,22 @@ impl ResponseError for PublishError {
 ///3. 发送新的邮件信息
 ///
 ///注意：actix_web::web::Json<BodyData>，解析信息的时候无法填充完BodyData的字段，actix_web就会生成一个400 Bad Request 响应直接返回
+#[tracing::instrument(
+    name = "Publish a newsletter issue",
+    skip(body, pool, email_client, request),
+    fields(username=tracing::field::Empty, user_id=tracing::field::Empty) //先申明要追踪的字段，在函数内部计算后再显示赋值
+)]
 pub async fn publish_newsletter(
     body: web::Json<BodyData>,
     pool: web::Data<PgPool>,
     email_client: web::Data<EmailClient>,
     request: HttpRequest,
 ) -> Result<HttpResponse, PublishError> {
-    let _credentials = basic_authentication(request.headers()).map_err(PublishError::AuthError)?;
+    let credentials = basic_authentication(request.headers()).map_err(PublishError::AuthError)?; //验证失败，将error手动转换为PublishError::AuthError
+    //current返回当前活跃的span的handle,然后对其进行操作
+    tracing::Span::current().record("username", tracing::field::display(&credentials.username)); //使用tracing::field::display 将值包裹为Value类型，并指定用Display trait格式的内容
+    let user_id = validate_credentials(credentials, &pool).await?;
+    tracing::Span::current().record("user_id", tracing::field::display(&user_id));
     let subscribers = get_confirmed_subscribers(&pool).await?;
     for subscriber in subscribers {
         match subscriber {
@@ -119,7 +133,6 @@ struct Credentials {
     password: Secret<String>,
 }
 
-/// TODO: 处理basic_authentication的错误
 ///提取base64编码的用户名和密码
 fn basic_authentication(headers: &HeaderMap) -> Result<Credentials, anyhow::Error> {
     //获取头部中关于HeaderMap 的值
@@ -131,7 +144,7 @@ fn basic_authentication(headers: &HeaderMap) -> Result<Credentials, anyhow::Erro
 
     //字符串切割出 用户名:密码的 base64 编码
     let base64encoded_segment = header_value
-        .strip_prefix("Basic")
+        .strip_prefix("Basic ")
         .context("The authorization scheme was not 'Basic'")?;
 
     //将内容转换为字节
@@ -157,6 +170,26 @@ fn basic_authentication(headers: &HeaderMap) -> Result<Credentials, anyhow::Erro
         username,
         password: Secret::new(password),
     })
+}
+
+/// 对调用newsletter端点的用户信息进行数据库users表的查询验证
+async fn validate_credentials(
+    credentials: Credentials,
+    pool: &PgPool,
+) -> Result<uuid::Uuid, PublishError> {
+    let user_id = sqlx::query!(
+        r#"SELECT user_id FROM users WHERE username = $1 AND password = $2"#,
+        credentials.username,
+        credentials.password.expose_secret()
+    )
+    .fetch_optional(pool)
+    .await
+    .context("Failed to perform a query to validate auth credentials.")?; //包裹原始的错误并添加提示信息，统一错误类型为anyhow::Error
+
+    user_id
+        .map(|row| row.user_id)
+        .ok_or_else(|| anyhow::anyhow!("Invaid username or password."))
+        .map_err(PublishError::AuthError)
 }
 
 ///确认订阅的订阅者
