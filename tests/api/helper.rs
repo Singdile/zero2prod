@@ -40,10 +40,13 @@ impl TestApp {
 
     ///向用户发送新的邮件
     pub async fn post_newsletters(&self, body: serde_json::Value) -> reqwest::Response {
+        //使用数据库中的users表中的具体用户
+        let (username, password) = self.test_user().await;
+
         reqwest::Client::new()
             .post(&format!("{}/newsletters", &self.address))
             //增加身份验证，透过测试requests_missing_authorization_are_rejected
-            .basic_auth(Uuid::new_v4().to_string(), Some(Uuid::new_v4().to_string())) //uuid,在现实中，你需要每秒生成 10 亿个 UUID 持续 85 年，才有 50% 的概率遇到一次重复。
+            .basic_auth(username, Some(password)) //uuid,在现实中，你需要每秒生成 10 亿个 UUID 持续 85 年，才有 50% 的概率遇到一次重复。
             .json(&body)
             .send()
             .await
@@ -75,6 +78,15 @@ impl TestApp {
         let plain_text = get_link(&body["TextBody"].as_str().unwrap());
 
         ConfirmationLinks { html, plain_text }
+    }
+
+    ///查询users表用户名和密码
+    pub async fn test_user(&self) -> (String, String) {
+        let row = sqlx::query!("SELECT username,password FROM users LIMIT 1;",)
+            .fetch_one(&self.db_pool)
+            .await
+            .expect("Failed to create test user.");
+        (row.username, row.password)
     }
 }
 
@@ -128,12 +140,30 @@ pub async fn spawn_app() -> TestApp {
     // 通常下面的代码是同task 是没有什么关系的，但是如果有要用到task的返回结果，那么就会在需要的位置执行.await()
     let _ = tokio::spawn(application.run_until_stopped());
 
-    TestApp {
+    let testapp = TestApp {
         address,
         db_pool: get_connection_pool(&configuration.database),
         email_server,
         port: application_port,
-    }
+    };
+
+    //添加user用户
+    add_test_user(&testapp.db_pool).await;
+
+    testapp
+}
+
+/// 直接将可以向用户发送邮件的操作者的信息导入到users数据库中去
+async fn add_test_user(pool: &PgPool) {
+    sqlx::query!(
+        r#"INSERT INTO users (user_id, username, password) VALUES ($1,$2,$3);"#,
+        Uuid::new_v4(),
+        Uuid::new_v4().to_string(),
+        Uuid::new_v4().to_string()
+    )
+    .execute(pool)
+    .await
+    .expect("Failed to create test users.");
 }
 
 ///连接上postgres系统数据库，创建一个新的数据库，然后建立与新数据库的连接池PgPool,并返回
