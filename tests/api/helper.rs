@@ -2,6 +2,7 @@
 use fake::faker::address;
 use once_cell::sync::Lazy;
 use secrecy::Secret;
+use sha3::Digest;
 use sqlx::{Connection, Executor, PgConnection, PgPool};
 use std::net::TcpListener;
 use uuid::Uuid;
@@ -18,6 +19,40 @@ pub struct TestApp {
     pub db_pool: PgPool,          //数据库连接池
     pub email_server: MockServer, //模拟服务器，替代Postmark的API
     pub port: u16,                //服务器端口地址
+    pub test_user: TestUser,      //测试用户
+}
+
+///辅助结构体，用于记录管理用户users
+pub struct TestUser {
+    pub user_id: Uuid,
+    pub username: String,
+    pub password: String,
+}
+
+impl TestUser {
+    pub fn generate() -> Self {
+        Self {
+            user_id: Uuid::new_v4(), //uuid 转成字符串之后的格式是：36个字符的固定格式: 8-4-4-4-12 分段的十六进制字符串
+            username: Uuid::new_v4().to_string(),
+            password: Uuid::new_v4().to_string(),
+        }
+    }
+
+    //存储信息
+    async fn store(&self, pool: &PgPool) {
+        let password_hash = sha3::Sha3_256::digest(&self.password.as_bytes());
+        let password_hash = format!("{:x}", password_hash);
+
+        sqlx::query!(
+            "INSERT INTO users (user_id,username, password_hash) VALUES ($1,$2,$3);",
+            self.user_id,
+            self.username,
+            password_hash
+        )
+        .execute(pool)
+        .await
+        .expect("Failed to store test user.");
+    }
 }
 
 ///发送给邮件API的请求中所包含的确认链接
@@ -40,13 +75,10 @@ impl TestApp {
 
     ///向用户发送新的邮件
     pub async fn post_newsletters(&self, body: serde_json::Value) -> reqwest::Response {
-        //使用数据库中的users表中的具体用户
-        let (username, password) = self.test_user().await;
-
         reqwest::Client::new()
             .post(&format!("{}/newsletters", &self.address))
             //增加身份验证，透过测试requests_missing_authorization_are_rejected
-            .basic_auth(username, Some(password)) //uuid,在现实中，你需要每秒生成 10 亿个 UUID 持续 85 年，才有 50% 的概率遇到一次重复。
+            .basic_auth(&self.test_user.username, Some(&self.test_user.password)) //uuid,在现实中，你需要每秒生成 10 亿个 UUID 持续 85 年，才有 50% 的概率遇到一次重复。
             .json(&body)
             .send()
             .await
@@ -78,15 +110,6 @@ impl TestApp {
         let plain_text = get_link(&body["TextBody"].as_str().unwrap());
 
         ConfirmationLinks { html, plain_text }
-    }
-
-    ///查询users表用户名和密码
-    pub async fn test_user(&self) -> (String, String) {
-        let row = sqlx::query!("SELECT username,password FROM users LIMIT 1;",)
-            .fetch_one(&self.db_pool)
-            .await
-            .expect("Failed to create test user.");
-        (row.username, row.password)
     }
 }
 
@@ -145,25 +168,13 @@ pub async fn spawn_app() -> TestApp {
         db_pool: get_connection_pool(&configuration.database),
         email_server,
         port: application_port,
+        test_user: TestUser::generate(),
     };
 
     //添加user用户
-    add_test_user(&testapp.db_pool).await;
+    testapp.test_user.store(&testapp.db_pool).await;
 
     testapp
-}
-
-/// 直接将可以向用户发送邮件的操作者的信息导入到users数据库中去
-async fn add_test_user(pool: &PgPool) {
-    sqlx::query!(
-        r#"INSERT INTO users (user_id, username, password) VALUES ($1,$2,$3);"#,
-        Uuid::new_v4(),
-        Uuid::new_v4().to_string(),
-        Uuid::new_v4().to_string()
-    )
-    .execute(pool)
-    .await
-    .expect("Failed to create test users.");
 }
 
 ///连接上postgres系统数据库，创建一个新的数据库，然后建立与新数据库的连接池PgPool,并返回

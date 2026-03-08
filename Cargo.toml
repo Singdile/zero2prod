@@ -33,6 +33,7 @@ rand = {version = "0.8", features = ["std_rng"]} #开启std_rng,从而使用所�
 thiserror = "1" #用于减少error样板代码
 anyhow = "1"
 base64 = "0.13"
+sha3 = "0.9" #用于加密保存密码
 
 
 [dependencies.sqlx]
